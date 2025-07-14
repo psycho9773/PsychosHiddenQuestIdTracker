@@ -1,4 +1,4 @@
---  Declare global frame to hook events
+---  Declare global frame to hook events
 
 local frame = CreateFrame("Frame")
 
