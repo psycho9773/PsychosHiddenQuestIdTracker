@@ -1,7 +1,7 @@
 ## Interface: 100107
 ## Title: PsychosHiddenQuestIdTracker
 ## Notes: Tracks hidden quest completions, raid boss kills, and dungeon completions
-## Author: Psycho
+## Author: Psycho-
 ## Version: 1.0
 ## IconTexture: 136122
 ## SavedVariables: PsychosHiddenQuestIdTrackerDB
