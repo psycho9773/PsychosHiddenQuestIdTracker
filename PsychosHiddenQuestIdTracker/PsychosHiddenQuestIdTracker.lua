@@ -1,15 +1,11 @@
----  Declare global frame to hook events
-
 local frame = CreateFrame("Frame")
-
 local initFrame = CreateFrame("Frame")
+local currentTab = "rares"
+
 initFrame:RegisterEvent("VARIABLES_LOADED")
 initFrame:SetScript("OnEvent", function()
-    --  Safely initialize SavedVariables after they're loaded
     PsychosHiddenQuestIdTrackerDB = PsychosHiddenQuestIdTrackerDB or {}
     PsychosHiddenQuestIdTrackerDB.rares    = PsychosHiddenQuestIdTrackerDB.rares    or {}
-    PsychosHiddenQuestIdTrackerDB.raids    = PsychosHiddenQuestIdTrackerDB.raids    or {}
-    PsychosHiddenQuestIdTrackerDB.dungeons = PsychosHiddenQuestIdTrackerDB.dungeons or {}
     PsychosHiddenQuestIdTrackerDB.weeklies = PsychosHiddenQuestIdTrackerDB.weeklies or {}
     PsychosHiddenQuestIdTrackerDB.dailies  = PsychosHiddenQuestIdTrackerDB.dailies  or {}
     PsychosHiddenQuestIdTrackerDB.currency = PsychosHiddenQuestIdTrackerDB.currency or {}
@@ -17,41 +13,30 @@ initFrame:SetScript("OnEvent", function()
     PsychosHiddenQuestIdTrackerDB.rareScanEnabled = PsychosHiddenQuestIdTrackerDB.rareScanEnabled or false
 end)
 
-local sessionRares, sessionRaids, sessionDungeons = {}, {}, {}
+local sessionRares = {}
 local sessionWeeklies, sessionDailies, sessionCurrency = {}, {}, {}
 local scrollParent, scrollFrame, scrollChild, textList
-local currentTab = "raids"
 local previousRareFlags = nil
-local rareRowWidgets = {}
 local weeklyRowWidgets = {}
-local raidsRowWidgets = {}
-local dungeonsRowWidgets = {}
 local dailiesRowWidgets = {}
 local currencyRowWidgets = {}
 local rareScanEnabled = false
 local guid, cachedName, npcID
-local lockedTarget = nil -- Cache for locked NPC name and ID during fight
-local lastGuid = nil -- Track last GUID to debounce rapid event firing
+local lockedTarget = nil
+local lastGuid = nil
 local completedWeeklyIDs = {}
 local previousWeeklyIDs = {}
 
---  Block spammy or always-present quests
-
 local blacklist = {
-    [75511] = true,  -- It’s probably used to flag a zone change, campaign phase, or a condition like “player entered weekly area.”
-    [53435] = true   -- If you're in a zone flagged for warmode this quest might be auto-granted or silently added to the log when PvP triggers in the background—even if it’s deprecated
+    [75511] = true,
+    [53435] = true
 }
 
-
-
---  Zone Name Helper
 local function getZoneName()
     local zoneID = C_Map.GetBestMapForUnit("player")
     local info = zoneID and C_Map.GetMapInfo(zoneID)
     return info and info.name or "Unknown Zone"
 end
-
---  Scan Hidden Quest Flags using custom range
 
 local function scanQuestFlags()
     local flags = {}
@@ -65,59 +50,43 @@ local function scanQuestFlags()
     return flags
 end
 
--- Helper function to count table entries
 local function countTable(t)
     local count = 0
     for _ in pairs(t or {}) do count = count + 1 end
     return count
 end
 
---  Display Tracker Data in Scroll Frame
-
 local function updateScrollView()
     if not scrollChild then
         return
     end
-    print("Updating scroll view for tab:", currentTab, "| sessionRares:", #sessionRares, "| sessionWeeklies:", #sessionWeeklies)
+--[[    print("Updating scroll view for tab:", currentTab, "| sessionRares:", #sessionRares, "| sessionWeeklies:", #sessionWeeklies)
+]]-- Blocked for now
 
-    -- Clear old widgets before building fresh rows
-    for _, widget in ipairs(rareRowWidgets) do
+    for _, widget in ipairs(rareRowWidgets or {}) do
         widget:Hide()
     end
     rareRowWidgets = {}
 
-    for _, widget in ipairs(weeklyRowWidgets) do
+    for _, widget in ipairs(weeklyRowWidgets or {}) do
         widget:Hide()
     end
     weeklyRowWidgets = {}
 
-    for _, widget in ipairs(raidsRowWidgets) do
-        widget:Hide()
-    end
-    raidsRowWidgets = {}
-
-    for _, widget in ipairs(dungeonsRowWidgets) do
-        widget:Hide()
-    end
-    dungeonsRowWidgets = {}
-
-    for _, widget in ipairs(dailiesRowWidgets) do
+    for _, widget in ipairs(dailiesRowWidgets or {}) do
         widget:Hide()
     end
     dailiesRowWidgets = {}
 
-    for _, widget in ipairs(currencyRowWidgets) do
+    for _, widget in ipairs(currencyRowWidgets or {}) do
         widget:Hide()
     end
     currencyRowWidgets = {}
 
-    -- Generic function to build rows for a tab
     local function buildRows(data, widgetTable, config)
         local startY = -5
-        for i, entry in ipairs(data) do
+        for i, entry in ipairs(data or {}) do
             local rowY = startY - (i * 24)
-
-            -- Create and configure each field based on the config table
             for _, field in ipairs(config.fields) do
                 local fontString = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
                 fontString:SetPoint("TOPLEFT", field.x, rowY)
@@ -147,7 +116,6 @@ local function updateScrollView()
                 table.insert(widgetTable, fontString)
             end
 
-            -- Add divider
             local divider = scrollChild:CreateTexture(nil, "BACKGROUND")
             divider:SetColorTexture(0.2, 0.2, 0.2, 0.9)
             divider:SetPoint("TOPLEFT", 85, rowY - 20)
@@ -157,7 +125,6 @@ local function updateScrollView()
         end
     end
 
-    -- Configuration for each tab
     local tabConfigs = {
         rares = {
             data = sessionRares,
@@ -183,28 +150,6 @@ local function updateScrollView()
                 { key = "time", x = 965, color = {0.5, 0.5, 0.5} },
             },
         },
-        raids = {
-            data = sessionRaids,
-            widgets = raidsRowWidgets,
-            fields = {
-                { key = "id", x = 85, color = {0.9, 0, 0} },
-                { key = "npc", x = 190, color = {1, 0.8, 0.2} },
-                { key = "npcID", x = 460, color = {1, 0.8, 0.2} },
-                { key = "zone", x = 630, color = {0, 0.5, 0.1}, width = 200, tooltip = "zone" },
-                { key = "zoneID", x = 845, color = {0, 0.5, 0.1} },
-                { key = "time", x = 965, color = {0.5, 0.5, 0.5} },
-            },
-        },
-        dungeons = {
-            data = sessionDungeons,
-            widgets = dungeonsRowWidgets,
-            fields = {
-                { key = "name", x = 85, color = {1, 0.8, 0.2}, width = 250, tooltip = "name" },
-                { key = "difficulty", x = 360, color = {1, 0.9, 0.3} },
-                { key = "killed", x = 560, color = {1, 0.8, 0.2}, format = function(e) return format("%d/%d", e.killed or 0, e.total or 0) end },
-                { key = "time", x = 965, color = {0.5, 0.5, 0.5} },
-            },
-        },
         dailies = {
             data = sessionDailies,
             widgets = dailiesRowWidgets,
@@ -223,38 +168,12 @@ local function updateScrollView()
         },
     }
 
-    -- Handle tab-specific rendering
     if tabConfigs[currentTab] then
         buildRows(tabConfigs[currentTab].data, tabConfigs[currentTab].widgets, tabConfigs[currentTab])
+    else
+        print("Invalid tab selected:", currentTab)
     end
 end
-
---  Scan Raids and Dungeons
-local function scanInstances()
-    for i = 1, GetNumSavedInstances() do
-        local name, _, _, bosses, killed, _, _, _, _, difficultyName, _, instanceID = GetSavedInstanceInfo(i)
-        if name and bosses > 0 then
-            local entry = {
-                name = name,
-                killed = killed,
-                total = bosses,
-                difficulty = difficultyName,
-                zone = getZoneName(),
-                time = date("%Y-%m-%d %H:%M:%S")
-            }
-            if bosses <= 5 then
-                table.insert(sessionDungeons, entry)
-                PsychosHiddenQuestIdTrackerDB.dungeons[instanceID] = entry
-            else
-                table.insert(sessionRaids, entry)
-                PsychosHiddenQuestIdTrackerDB.raids[instanceID] = entry
-            end
-        end
-    end
-    print("Scanned instances: Raids=", #sessionRaids, "Dungeons=", #sessionDungeons)
-end
-
---  Begin Rare Tracking via Hidden Quest Flags
 
 local function startRareTracking()
     previousRareFlags = scanQuestFlags()
@@ -269,7 +188,6 @@ local function startRareTracking()
                 npcID = nil
                 lockedTarget = nil
                 lastGuid = nil
-
                 return
             end
             local newGuid = UnitGUID("target")
@@ -281,7 +199,6 @@ local function startRareTracking()
                 guid = nil
                 cachedName = nil
                 npcID = nil
-
                 return
             end
             guid = newGuid
@@ -292,27 +209,27 @@ local function startRareTracking()
                 print("PLAYER_TARGET_CHANGED: Locked target | Name=", cachedName, "| NPCID=", npcID)
             else
                 print("PLAYER_TARGET_CHANGED: Invalid target | Name=", cachedName, "| NPCID=", npcID)
+                lockedTarget = nil
             end
         elseif event == "LOOT_OPENED" then
             if not rareScanEnabled then
-
                 return
             end
             local lootGuid = GetLootSourceInfo(1)
-            if lootGuid then
-                local lootName = GetUnitName("mouseover") or "Unknown"
+            if lootGuid and lockedTarget and lockedTarget.npcID then
+                local lootName = GetUnitName("mouseover") or cachedName or "Unknown"
                 local lootNpcID = lootGuid and tonumber(lootGuid:match("Creature%-0%-%d+%-%d+%-%d+%-(%d+)")) or 0
-                if lootNpcID ~= 0 then
+                if lootNpcID ~= 0 and lootName ~= "Unknown" and lootNpcID == lockedTarget.npcID then
                     lockedTarget = { name = lootName, npcID = lootNpcID }
                     print("LOOT_OPENED: Updated locked target from corpse | Name=", lootName, "| NPCID=", lootNpcID)
+                else
+                    print("LOOT_OPENED: Skipped loot target | Name=", lootName, "| NPCID=", lootNpcID, "| Expected NPCID=", lockedTarget.npcID)
                 end
+            else
+                print("LOOT_OPENED: No valid loot source or no locked target | LootGUID=", lootGuid and "Valid" or "Nil", "| LockedTarget=", lockedTarget and lockedTarget.npcID or "Nil")
             end
-
--- Weekly quest collection
-
         elseif event == "QUEST_LOG_UPDATE" then
             C_Timer.After(0.5, function()
-                -- Weekly quest logic
                 for i = 1, C_QuestLog.GetNumQuestLogEntries() do
                     local info = C_QuestLog.GetInfo(i)
                     if info and not info.isHeader and info.frequency == 2 then
@@ -331,7 +248,7 @@ local function startRareTracking()
                                 }
                                 table.insert(sessionWeeklies, entry)
                                 PsychosHiddenQuestIdTrackerDB.weeklies[questID] = entry
-                                print(" Weekly quest logged:", entry.name, "| QuestID:", entry.id)
+                                print("Weekly quest logged:", entry.name, "| QuestID:", entry.id)
                                 updateScrollView()
                             end
                             if C_QuestLog.IsComplete(questID) and not completedWeeklyIDs[questID] then
@@ -346,14 +263,12 @@ local function startRareTracking()
                                 }
                                 table.insert(sessionWeeklies, entry)
                                 PsychosHiddenQuestIdTrackerDB.weeklies[questID] = entry
-                                print(" Weekly quest completed:", entry.name, "| QuestID:", entry.id)
+                                print("Weekly quest completed:", entry.name, "| QuestID:", entry.id)
                                 updateScrollView()
                             end
                         end
                     end
                 end
-
-                -- Rare scanning logic
 
                 if not rareScanEnabled then
                     guid = nil
@@ -361,7 +276,6 @@ local function startRareTracking()
                     npcID = nil
                     lockedTarget = nil
                     lastGuid = nil
-
                     updateScrollView()
                     return
                 end
@@ -370,33 +284,34 @@ local function startRareTracking()
                 for id in pairs(currentFlags) do
                     if not previousRareFlags or not previousRareFlags[id] then
                         if not C_QuestLog.GetLogIndexForQuestID(id) then
-                            newFlagsFound = true
-                            local entry = {
-                                npcID = lockedTarget and lockedTarget.npcID or npcID or 0,
-                                npc = lockedTarget and lockedTarget.name or cachedName or "Unknown Rare",
-                                zone = getZoneName(),
-                                zoneID = C_Map.GetBestMapForUnit("player") or 0,
-                                id = id,
-                                time = date("%Y-%m-%d %H:%M:%S")
-                            }
-                            table.insert(sessionRares, entry)
-                            PsychosHiddenQuestIdTrackerDB.rares[id] = entry
-                            print(" Rare logged: Name=", entry.npc, "| FlagID=", id, "| NPCID=", entry.npcID, "| Zone=", entry.zone)
-                            lockedTarget = nil -- Clear locked target after logging
-                            updateScrollView()
+                            local targetName = lockedTarget and lockedTarget.name or cachedName or "Unknown"
+                            local targetNpcID = lockedTarget and lockedTarget.npcID or npcID or 0
+                            if targetName == "Unknown" or targetNpcID == 0 then
+                                print("QUEST_LOG_UPDATE: Skipped logging rare due to invalid data | Name=", targetName, "| NPCID=", targetNpcID, "| FlagID=", id)
+                            else
+                                newFlagsFound = true
+                                local entry = {
+                                    npcID = targetNpcID,
+                                    npc = targetName,
+                                    zone = getZoneName(),
+                                    zoneID = C_Map.GetBestMapForUnit("player") or 0,
+                                    id = id,
+                                    time = date("%Y-%m-%d %H:%M:%S")
+                                }
+                                table.insert(sessionRares, entry)
+                                PsychosHiddenQuestIdTrackerDB.rares[id] = entry
+                                print("Rare logged: Name=", entry.npc, "| FlagID=", id, "| NPCID=", entry.npcID, "| Zone=", entry.zone)
+                                lockedTarget = nil
+                                updateScrollView()
+                            end
                         end
                     end
-                end
-                if not newFlagsFound then
-
                 end
                 previousRareFlags = currentFlags
             end)
         end
     end)
 end
-
--- Build Scrollable Tracker Frame
 
 function buildScrollFrame()
     scrollParent = CreateFrame("Frame", "PHQIDTrackerFrame", UIParent, "BackdropTemplate")
@@ -423,8 +338,6 @@ function buildScrollFrame()
     title:SetText("Psychos Hidden Quest Tracker")
     title:SetTextColor(.6, .8, 1)
 
-    --  Tabs across the top
-
     local function createTab(label, xOffset, tabType)
         local btn = CreateFrame("Button", nil, scrollParent, "UIPanelButtonTemplate")
         btn:SetNormalFontObject("GameFontNormalLarge")
@@ -434,19 +347,15 @@ function buildScrollFrame()
         btn:SetText(label)
         btn:SetScript("OnClick", function()
             currentTab = tabType
-
             updateScrollView()
         end)
     end
 
-    createTab("Raids", 30, "raids")
-    createTab("Dungeons", 175, "dungeons")
     createTab("Rares", 320, "rares")
     createTab("Weeklies", 465, "weeklies")
     createTab("Dailies", 610, "dailies")
     createTab("Currency", 755, "currency")
 
-    --  Static Column Headers (attached to PHQIDTrackerFrame)
     local masterHeaders = {
         { text = "Completed Flag ID#", x = 10 },
         { text = "Name/Quest/Currency", x = 190 },
@@ -463,7 +372,6 @@ function buildScrollFrame()
         label:SetTextColor(.6, .8, 1)
     end
 
-    --  Scan Range Controls
     local editFrom = scrollParent:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     editFrom:SetPoint("TOPLEFT", 370, -15)
     editFrom:SetText("From quest ID :")
@@ -516,8 +424,6 @@ function buildScrollFrame()
         self:ClearFocus()
     end)
 
-    --  Custom Rare Scan Toggle Button (Backdrop-based)
-
     local customBtn = CreateFrame("Frame", nil, scrollParent, "BackdropTemplate")
     customBtn:SetSize(240, 50)
     customBtn:SetPoint("TOPRIGHT", -60, -20)
@@ -529,13 +435,11 @@ function buildScrollFrame()
     })
     customBtn:SetBackdropColor(PsychosHiddenQuestIdTrackerDB.rareScanEnabled and 1 or 0, PsychosHiddenQuestIdTrackerDB.rareScanEnabled and 0 or 1, 0, 0.6)
 
-    --  Text Label Overlay
     local label = customBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
     label:SetPoint("CENTER")
     label:SetText(PsychosHiddenQuestIdTrackerDB.rareScanEnabled and "Disable Rare Scan" or "Enable Rare Scan")
     label:SetTextColor(PsychosHiddenQuestIdTrackerDB.rareScanEnabled and 1 or 0, PsychosHiddenQuestIdTrackerDB.rareScanEnabled and 0 or 1, 0)
 
-    --  Enable Mouse Interaction
     customBtn:EnableMouse(true)
     customBtn:SetScript("OnMouseDown", function()
         rareScanEnabled = not rareScanEnabled
@@ -550,7 +454,6 @@ function buildScrollFrame()
             npcID = nil
             lockedTarget = nil
             lastGuid = nil
-
         end
     end)
 
@@ -566,10 +469,9 @@ function buildScrollFrame()
     scrollChild:SetSize(580, 1000)
     scrollFrame:SetScrollChild(scrollChild)
 
-    --  Enable mouse wheel scrolling with custom speed
     scrollFrame:EnableMouseWheel(true)
     scrollFrame:SetScript("OnMouseWheel", function(self, delta)
-        local scrollAmount = 24  -- ← Adjust scroll speed here
+        local scrollAmount = 24
         local current = self:GetVerticalScroll()
         local maxScroll = self:GetVerticalScrollRange()
         self:SetVerticalScroll(math.max(0, math.min(current - delta * scrollAmount, maxScroll)))
@@ -583,18 +485,12 @@ function buildScrollFrame()
     textList:SetText("")
 end
 
---  Slash Command to Activate Addon
 SLASH_PHQID1 = "/phqid"
 SlashCmdList["PHQID"] = function()
-
-    --  Ensure SavedVariables exist
-
     if not PsychosHiddenQuestIdTrackerDB then
         PsychosHiddenQuestIdTrackerDB = {}
     end
     PsychosHiddenQuestIdTrackerDB.rares    = PsychosHiddenQuestIdTrackerDB.rares    or {}
-    PsychosHiddenQuestIdTrackerDB.raids    = PsychosHiddenQuestIdTrackerDB.raids    or {}
-    PsychosHiddenQuestIdTrackerDB.dungeons = PsychosHiddenQuestIdTrackerDB.dungeons or {}
     PsychosHiddenQuestIdTrackerDB.weeklies = PsychosHiddenQuestIdTrackerDB.weeklies or {}
     PsychosHiddenQuestIdTrackerDB.dailies  = PsychosHiddenQuestIdTrackerDB.dailies  or {}
     PsychosHiddenQuestIdTrackerDB.currency = PsychosHiddenQuestIdTrackerDB.currency or {}
@@ -602,21 +498,12 @@ SlashCmdList["PHQID"] = function()
     PsychosHiddenQuestIdTrackerDB.rareScanEnabled = PsychosHiddenQuestIdTrackerDB.rareScanEnabled or false
     rareScanEnabled = PsychosHiddenQuestIdTrackerDB.rareScanEnabled
 
-    --  Build Scroll Frame UI if needed
     if not scrollParent then
         buildScrollFrame()
     end
 
-    --  Start rare tracking session
     startRareTracking()
-
-    --  Scan raid/dungeon lockouts
-    scanInstances()
-
-    --  Update visible scroll content
     updateScrollView()
-
-    --  Display UI panel
     scrollParent:Show()
     print("Rare scanning initialized, state:", rareScanEnabled and "enabled" or "disabled")
 end
