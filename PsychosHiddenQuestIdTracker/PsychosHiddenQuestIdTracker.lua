@@ -16,7 +16,8 @@ end)
 local sessionRares = {}
 local sessionWeeklies, sessionDailies, sessionCurrency = {}, {}, {}
 local scrollParent, scrollFrame, scrollChild, textList
-local previousRareFlags = nil
+local knownidListFrame 
+local rareRowWidgets = {}
 local weeklyRowWidgets = {}
 local dailiesRowWidgets = {}
 local currencyRowWidgets = {}
@@ -24,12 +25,17 @@ local rareScanEnabled = false
 local guid, cachedName, npcID
 local lockedTarget = nil
 local lastGuid = nil
-local completedWeeklyIDs = {}
-local previousWeeklyIDs = {}
+local completedQuestIDs = {}
+local previousQuestIDs = {}
 
 local blacklist = {
-    [75511] = true,
-    [53435] = true
+    [57562] = true, [53435] = true, [82146] = true,
+    [50598] = true, [57567] = true, [50603] = true,
+    [50602] = true, [85489] = true, [48639] = true,
+    [82158] = true, [86174] = true, [42233] = true,
+    [48641] = true, [75511] = true, [50604] = true,
+    [57566] = true, [42421] = true, [57564] = true,
+    [50562] = true, [42422] = true,
 }
 
 local function getZoneName()
@@ -60,28 +66,51 @@ local function updateScrollView()
     if not scrollChild then
         return
     end
---[[    print("Updating scroll view for tab:", currentTab, "| sessionRares:", #sessionRares, "| sessionWeeklies:", #sessionWeeklies)
-]]-- Blocked for now
 
+    -- Clear all widgets
     for _, widget in ipairs(rareRowWidgets or {}) do
         widget:Hide()
+        widget:ClearAllPoints()
+        widget:SetParent(nil)
     end
     rareRowWidgets = {}
 
     for _, widget in ipairs(weeklyRowWidgets or {}) do
         widget:Hide()
+        widget:ClearAllPoints()
+        widget:SetParent(nil)
     end
     weeklyRowWidgets = {}
 
     for _, widget in ipairs(dailiesRowWidgets or {}) do
         widget:Hide()
+        widget:ClearAllPoints()
+        widget:SetParent(nil)
     end
     dailiesRowWidgets = {}
 
     for _, widget in ipairs(currencyRowWidgets or {}) do
         widget:Hide()
+        widget:ClearAllPoints()
+        widget:SetParent(nil)
     end
     currencyRowWidgets = {}
+
+    local function sortByTimestamp(a, b)
+        return a.time < b.time
+    end
+
+    local sortedDailies = {}
+    for _, entry in ipairs(sessionDailies) do
+        table.insert(sortedDailies, entry)
+    end
+    table.sort(sortedDailies, sortByTimestamp)
+
+    local sortedWeeklies = {}
+    for _, entry in ipairs(sessionWeeklies) do
+        table.insert(sortedWeeklies, entry)
+    end
+    table.sort(sortedWeeklies, sortByTimestamp)
 
     local function buildRows(data, widgetTable, config)
         local startY = -5
@@ -113,7 +142,7 @@ local function updateScrollView()
                     end)
                 end
 
-                table.insert(widgetTable, fontString)
+                table.insert(widgetTable,  fontString)
             end
 
             local divider = scrollChild:CreateTexture(nil, "BACKGROUND")
@@ -139,7 +168,7 @@ local function updateScrollView()
             },
         },
         weeklies = {
-            data = sessionWeeklies,
+            data = sortedWeeklies,
             widgets = weeklyRowWidgets,
             fields = {
                 { key = "id", x = 85, color = {0.9, 0, 0} },
@@ -151,10 +180,16 @@ local function updateScrollView()
             },
         },
         dailies = {
-            data = sessionDailies,
+            data = sortedDailies,
             widgets = dailiesRowWidgets,
             fields = {
-                { key = "name", x = 85, color = {1, 0.8, 0.2}, width = 250, tooltip = "name" },
+                { key = "id", x = 85, color = {0.9, 0, 0} },
+                { key = "name", x = 190, color = {1, 0.8, 0.2}, width = 250, tooltip = "name", format = function(entry)
+                    return C_QuestLog.IsWorldQuest(entry.id) and (entry.name .. " (WQ)") or entry.name
+                end },
+                { key = "id", x = 460, color = {1, 0.8, 0.2} },
+                { key = "zone", x = 630, color = {0, 0.5, 0.1}, width = 200, tooltip = "zone" },
+                { key = "zoneID", x = 845, color = {0, 0.5, 0.1} },
                 { key = "time", x = 965, color = {0.5, 0.5, 0.5} },
             },
         },
@@ -170,13 +205,14 @@ local function updateScrollView()
 
     if tabConfigs[currentTab] then
         buildRows(tabConfigs[currentTab].data, tabConfigs[currentTab].widgets, tabConfigs[currentTab])
+        -- print(currentTab .. " tab data:", #tabConfigs[currentTab].data, "entries")
     else
         print("Invalid tab selected:", currentTab)
     end
 end
 
 local function startRareTracking()
-    previousRareFlags = scanQuestFlags()
+    local previousRareFlags = scanQuestFlags()
     frame:RegisterEvent("PLAYER_TARGET_CHANGED")
     frame:RegisterEvent("QUEST_LOG_UPDATE")
     frame:RegisterEvent("LOOT_OPENED")
@@ -216,57 +252,90 @@ local function startRareTracking()
                 return
             end
             local lootGuid = GetLootSourceInfo(1)
-            if lootGuid and lockedTarget and lockedTarget.npcID then
-                local lootName = GetUnitName("mouseover") or cachedName or "Unknown"
-                local lootNpcID = lootGuid and tonumber(lootGuid:match("Creature%-0%-%d+%-%d+%-%d+%-(%d+)")) or 0
-                if lootNpcID ~= 0 and lootName ~= "Unknown" and lootNpcID == lockedTarget.npcID then
-                    lockedTarget = { name = lootName, npcID = lootNpcID }
-                    print("LOOT_OPENED: Updated locked target from corpse | Name=", lootName, "| NPCID=", lootNpcID)
-                else
-                    print("LOOT_OPENED: Skipped loot target | Name=", lootName, "| NPCID=", lootNpcID, "| Expected NPCID=", lockedTarget.npcID)
-                end
+            local lootName = GetUnitName("mouseover") or cachedName or "Unknown"
+            local lootNpcID = lootGuid and tonumber(lootGuid:match("Creature%-0%-%d+%-%d+%-%d+%-(%d+)")) or 0
+            if lootGuid then
+                print("LOOT_OPENED: Looted | Name=", lootName, "| NPCID=", lootNpcID, "| LockedTarget=", lockedTarget and lockedTarget.npcID or "Nil")
             else
-                print("LOOT_OPENED: No valid loot source or no locked target | LootGUID=", lootGuid and "Valid" or "Nil", "| LockedTarget=", lockedTarget and lockedTarget.npcID or "Nil")
+                print("LOOT_OPENED: No valid loot source | LockedTarget=", lockedTarget and lockedTarget.npcID or "Nil")
             end
         elseif event == "QUEST_LOG_UPDATE" then
             C_Timer.After(0.5, function()
                 for i = 1, C_QuestLog.GetNumQuestLogEntries() do
                     local info = C_QuestLog.GetInfo(i)
-                    if info and not info.isHeader and info.frequency == 2 then
+                    if info and not info.isHeader then
                         local questID = info.questID
                         local title = info.title or "Unknown"
-                        if not blacklist[questID] then
-                            if not previousWeeklyIDs[questID] then
-                                previousWeeklyIDs[questID] = true
-                                local zoneID = C_Map.GetBestMapForUnit("player") or 0
-                                local entry = {
-                                    id = questID,
-                                    name = title,
-                                    zone = getZoneName(),
-                                    zoneID = zoneID,
-                                    time = date("%Y-%m-%d %H:%M:%S")
-                                }
-                                table.insert(sessionWeeklies, entry)
-                                PsychosHiddenQuestIdTrackerDB.weeklies[questID] = entry
-                                print("Weekly quest logged:", entry.name, "| QuestID:", entry.id)
-                                updateScrollView()
-                            end
-                            if C_QuestLog.IsComplete(questID) and not completedWeeklyIDs[questID] then
-                                completedWeeklyIDs[questID] = true
-                                local zoneID = C_Map.GetBestMapForUnit("player") or 0
-                                local entry = {
-                                    id = questID,
-                                    name = title,
-                                    zone = getZoneName(),
-                                    zoneID = zoneID,
-                                    time = date("%Y-%m-%d %H:%M:%S")
-                                }
-                                table.insert(sessionWeeklies, entry)
-                                PsychosHiddenQuestIdTrackerDB.weeklies[questID] = entry
-                                print("Weekly quest completed:", entry.name, "| QuestID:", entry.id)
-                                updateScrollView()
+                        local frequency = info.frequency or 0
+                        local isWorldQuest = C_QuestLog.IsWorldQuest(questID)
+                        if frequency == 2 or frequency == 1 or frequency == 3 or isWorldQuest then
+                            local isDaily = (frequency == 1 or frequency == 3 or (isWorldQuest and C_TaskQuest.GetQuestTimeLeftMinutes(questID) <= 1440)) and not (frequency == 2)
+                            local questType = isDaily and "Daily" or "Weekly"
+                            local targetTable = isDaily and sessionDailies or sessionWeeklies
+                            local dbTable = isDaily and PsychosHiddenQuestIdTrackerDB.dailies or PsychosHiddenQuestIdTrackerDB.weeklies
+
+                            if not blacklist[questID] then
+                                if not previousQuestIDs[questID] then
+                                    previousQuestIDs[questID] = true
+                                    local zoneID = C_Map.GetBestMapForUnit("player") or 0
+                                    local entry = {
+                                        id = questID,
+                                        name = title,
+                                        zone = getZoneName(),
+                                        zoneID = zoneID,
+                                        time = date("%Y-%m-%d %H:%M:%S")
+                                    }
+                                    table.insert(targetTable, entry)
+                                    dbTable[questID] = entry
+                                    print(questType .. " quest picked up:", title, "| QuestID:", questID)
+                                    updateScrollView()
+                                end
+                                if C_QuestLog.IsComplete(questID) and not completedQuestIDs[questID] then
+                                    completedQuestIDs[questID] = true
+                                    local zoneID = C_Map.GetBestMapForUnit("player") or 0
+                                    local entry = {
+                                        id = questID,
+                                        name = title,
+                                        zone = getZoneName(),
+                                        zoneID = zoneID,
+                                        time = date("%Y-%m-%d %H:%M:%S")
+                                    }
+                                    table.insert(targetTable, entry)
+                                    dbTable[questID] = entry
+                                    print(questType .. " quest completed:", title, "| QuestID:", questID)
+                                    updateScrollView()
+                                end
                             end
                         end
+                    end
+                end
+                local zoneID = C_Map.GetBestMapForUnit("player") or 0
+                local worldQuests = C_TaskQuest.GetQuestsForPlayerByMapID(zoneID)
+                for _, questInfo in ipairs(worldQuests or {}) do
+                    local questID = questInfo.questId
+                    if not questID then
+                        -- Skip silently
+                        break
+                    end
+                    local title = C_QuestLog.GetTitleForQuestID(questID) or "Unknown"
+                    local timeLeft = C_TaskQuest.GetQuestTimeLeftMinutes(questID) or 0
+                    local isDaily = timeLeft <= 1440
+                    local questType = isDaily and "Daily" or "Weekly"
+                    local targetTable = isDaily and sessionDailies or sessionWeeklies
+                    local dbTable = isDaily and PsychosHiddenQuestIdTrackerDB.dailies or PsychosHiddenQuestIdTrackerDB.weeklies
+                    if not blacklist[questID] and not previousQuestIDs[questID] then
+                        previousQuestIDs[questID] = true
+                        local entry = {
+                            id = questID,
+                            name = title,
+                            zone = getZoneName(),
+                            zoneID = zoneID,
+                            time = date("%Y-%m-%d %H:%M:%S")
+                        }
+                        table.insert(targetTable, entry)
+                        dbTable[questID] = entry
+                        print(questType .. " (World) quest picked up:", title, "| QuestID:", questID)
+                        updateScrollView()
                     end
                 end
 
@@ -280,16 +349,12 @@ local function startRareTracking()
                     return
                 end
                 local currentFlags = scanQuestFlags()
-                local newFlagsFound = false
                 for id in pairs(currentFlags) do
-                    if not previousRareFlags or not previousRareFlags[id] then
+                    if not previousRareFlags[id] then
                         if not C_QuestLog.GetLogIndexForQuestID(id) then
                             local targetName = lockedTarget and lockedTarget.name or cachedName or "Unknown"
                             local targetNpcID = lockedTarget and lockedTarget.npcID or npcID or 0
-                            if targetName == "Unknown" or targetNpcID == 0 then
-                                print("QUEST_LOG_UPDATE: Skipped logging rare due to invalid data | Name=", targetName, "| NPCID=", targetNpcID, "| FlagID=", id)
-                            else
-                                newFlagsFound = true
+                            if targetName ~= "Unknown" and targetNpcID ~= 0 then
                                 local entry = {
                                     npcID = targetNpcID,
                                     npc = targetName,
@@ -300,7 +365,7 @@ local function startRareTracking()
                                 }
                                 table.insert(sessionRares, entry)
                                 PsychosHiddenQuestIdTrackerDB.rares[id] = entry
-                                print("Rare logged: Name=", entry.npc, "| FlagID=", id, "| NPCID=", entry.npcID, "| Zone=", entry.zone)
+                                print("Rare logged: Name=", targetName, "| FlagID=", id, "| NPCID=", targetNpcID, "| Zone=", entry.zone)
                                 lockedTarget = nil
                                 updateScrollView()
                             end
@@ -338,6 +403,147 @@ function buildScrollFrame()
     title:SetText("Psychos Hidden Quest Tracker")
     title:SetTextColor(.6, .8, 1)
 
+-- knownid Frame
+knownidListFrame = CreateFrame("Frame", nil, scrollParent, "BackdropTemplate")
+knownidListFrame:SetSize(410, 365)
+knownidListFrame:SetFrameLevel(scrollParent:GetFrameLevel() + 5)
+knownidListFrame:SetPoint("TOPRIGHT", scrollParent, "TOPRIGHT", -5, -70)
+knownidListFrame:SetBackdrop({
+    bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+    edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+    tile = true, tileSize = 16, edgeSize = 12,
+    insets = { left = 4, right = 4, top = 4, bottom = 4 }
+})
+knownidListFrame:SetBackdropColor(0, 0, 0)
+knownidListFrame:Hide() -- start hidden
+
+-- Create the known ID scroll frame inside knownidListFrame
+local knownidScrollFrame = CreateFrame("ScrollFrame", nil, knownidListFrame, "UIPanelScrollFrameTemplate")
+knownidScrollFrame:SetPoint("TOPLEFT", 8, -8)
+knownidScrollFrame:SetPoint("BOTTOMRIGHT", -30, 8)
+knownidScrollFrame:EnableMouseWheel(true)
+knownidScrollFrame:SetScript("OnMouseWheel", function(self, delta)
+    local current = self:GetVerticalScroll()
+    local maxScroll = self:GetVerticalScrollRange()
+    local scrollAmount = 24  -- adjust to your liking
+    self:SetVerticalScroll(math.max(0, math.min(current - delta * scrollAmount, maxScroll)))
+end)
+
+
+-- Create the content frame to hold text
+local scrollContent = CreateFrame("Frame", nil, knownidScrollFrame)
+scrollContent:SetSize(370, 600)
+knownidScrollFrame:SetScrollChild(scrollContent)
+
+-- Main title, centered
+local header = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+header:SetPoint("TOP", scrollContent, "TOP", 0, -10)
+header:SetJustifyH("CENTER")
+header:SetTextColor(0.6, 0.8, 1)
+header:SetText("Known Completed Flag ID Ranges")
+
+-- The War Within section header, centered
+local twwHeader = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+twwHeader:SetPoint("TOP", scrollContent, "TOP", 0, -50)
+twwHeader:SetJustifyH("CENTER")
+twwHeader:SetTextColor(0.4, 0.9, 1)
+twwHeader:SetText("-  The War Within  -")
+
+-- Range entries for The War Within, columnized
+local twwData = {
+    { "Rares",     "84000–91000" },
+    { "Weeklies",  "85000–92000" },
+    { "Dailies",   "85000–92000" },
+    { "Dungeons",  "86000–91500" },
+    { "Raids",     "88000–92000+" },
+    { "Currency",  "88000–92000" },
+}
+
+local yStart = -90
+local spacing = 22
+
+for i, entry in ipairs(twwData) do
+    local label, range = unpack(entry)
+    local y = yStart - ((i - 1) * spacing)
+
+    local labelText = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+    labelText:SetPoint("TOPLEFT", 50, y)
+    labelText:SetTextColor(1, 0.8, 0.2)
+    labelText:SetText(label)
+
+    local rangeText = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+    rangeText:SetPoint("TOPLEFT", 190, y)
+    rangeText:SetTextColor(0.9, 0, 0)
+    rangeText:SetText(range)
+end
+
+-- Dragonflight & Prior section header, centered
+local dfHeaderY = yStart - (#twwData * spacing) - 20
+local dfHeader = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+dfHeader:SetPoint("TOP", scrollContent, "TOP", 0, dfHeaderY)
+dfHeader:SetJustifyH("CENTER")
+dfHeader:SetTextColor(0.4, 0.9, 1)
+dfHeader:SetText("-  Dragonflight & Prior  -")
+
+-- Dragonflight range entries, columnized
+local dfData = {
+    { "Rares",     "80000–85000" },
+    { "Weeklies",  "50000–59999" },
+    { "Dailies",   "40000–49999" },
+    { "Dungeons",  "60000–69999" },
+    { "Raids",     "70000–79999" },
+    { "Currency",  "30000–39999" },
+}
+
+local dfStartY = dfHeaderY - 40
+for i, entry in ipairs(dfData) do
+    local label, range = unpack(entry)
+    local y = dfStartY - ((i - 1) * spacing)
+
+    local labelText = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+    labelText:SetPoint("TOPLEFT", 50, y)
+    labelText:SetTextColor(1, 0.8, 0.2)
+    labelText:SetText(label)
+
+    local rangeText = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+    rangeText:SetPoint("TOPLEFT", 190, y)
+    rangeText:SetTextColor(0.9, 0, 0)
+    rangeText:SetText(range)
+end
+
+-- Footer note, centered
+local footerY = dfStartY - (#dfData * spacing) - 30
+local footer = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+footer:SetPoint("TOP", scrollContent, "TOP", 10, footerY)
+footer:SetWidth(350)
+footer:SetJustifyH("CENTER")
+footer:SetTextColor(0.9, 0, 0)
+footer:SetText("These ranges are approximate and represent common flag IDs for each content type.")
+
+
+
+
+
+
+
+
+
+           local knownidbtn = CreateFrame("Button", nil, scrollParent, "UIPanelButtonTemplate")
+            knownidbtn:SetNormalFontObject("GameFontNormalLarge")
+            knownidbtn:SetHighlightFontObject("GameFontNormalLarge")
+            knownidbtn:SetSize(150, 34)
+            knownidbtn:SetPoint("TOPRIGHT", -18, -34)
+            knownidbtn:SetText("Known ID Table")
+            knownidbtn:SetScript("OnClick", function()
+             if knownidListFrame:IsShown() then
+              knownidListFrame:Hide()
+            else
+           knownidListFrame:Show()
+      end
+end)
+
+
+
     local function createTab(label, xOffset, tabType)
         local btn = CreateFrame("Button", nil, scrollParent, "UIPanelButtonTemplate")
         btn:SetNormalFontObject("GameFontNormalLarge")
@@ -347,14 +553,26 @@ function buildScrollFrame()
         btn:SetText(label)
         btn:SetScript("OnClick", function()
             currentTab = tabType
+            if tabType == "weeklies" then
+                sessionWeeklies = {}
+                for _, entry in pairs(PsychosHiddenQuestIdTrackerDB.weeklies) do
+                    table.insert(sessionWeeklies, entry)
+                end
+            elseif tabType == "dailies" then
+                sessionDailies = {}
+                for _, entry in pairs(PsychosHiddenQuestIdTrackerDB.dailies) do
+                    table.insert(sessionDailies, entry)
+                end
+            end
             updateScrollView()
+            C_Timer.After(0.1, updateScrollView)
         end)
     end
 
-    createTab("Rares", 320, "rares")
-    createTab("Weeklies", 465, "weeklies")
-    createTab("Dailies", 610, "dailies")
-    createTab("Currency", 755, "currency")
+    createTab("Rares", 120, "rares")
+    createTab("Weeklies", 265, "weeklies")
+    createTab("Dailies", 410, "dailies")
+    createTab("Currency", 555, "currency")
 
     local masterHeaders = {
         { text = "Completed Flag ID#", x = 10 },
@@ -383,7 +601,7 @@ function buildScrollFrame()
     local minBox = CreateFrame("EditBox", nil, scrollParent, "InputBoxTemplate")
     minBox:SetFontObject("GameFontNormalLarge")
     minBox:SetSize(75, 25)
-    minBox:SetTextColor(1, 1, 1)
+    minBox:SetTextColor(.9, 0, 0)
     minBox:SetPoint("TOPLEFT", 500, -10)
     minBox:SetMaxLetters(7)
     minBox:SetAutoFocus(false)
@@ -391,7 +609,7 @@ function buildScrollFrame()
     local maxBox = CreateFrame("EditBox", nil, scrollParent, "InputBoxTemplate")
     maxBox:SetFontObject("GameFontNormalLarge")
     maxBox:SetSize(75, 25)
-    maxBox:SetTextColor(1, 1, 1)
+    maxBox:SetTextColor(.9, 0, 0)
     maxBox:SetPoint("TOPLEFT", minBox, "TOPRIGHT", 120, 0)
     maxBox:SetMaxLetters(7)
     maxBox:SetAutoFocus(false)
@@ -408,8 +626,8 @@ function buildScrollFrame()
         if min and max and min < max then
             PsychosHiddenQuestIdTrackerDB.scanRange.min = min
             PsychosHiddenQuestIdTrackerDB.scanRange.max = max
-            print("Updated scan range:", min, "-", max)
-            previousRareFlags = scanQuestFlags()
+            local tempFlags = scanQuestFlags()
+            previousRareFlags = tempFlags
         else
             print("Invalid range. Use lower value in Min and higher in Max.")
         end
@@ -425,8 +643,8 @@ function buildScrollFrame()
     end)
 
     local customBtn = CreateFrame("Frame", nil, scrollParent, "BackdropTemplate")
-    customBtn:SetSize(240, 50)
-    customBtn:SetPoint("TOPRIGHT", -60, -20)
+    customBtn:SetSize(240, 60)
+    customBtn:SetPoint("TOPRIGHT", -180, -10)
     customBtn:SetBackdrop({
         bgFile = "Interface/Tooltips/UI-Tooltip-Background",
         edgeFile = "Interface/DialogFrame/UI-DialogBox-Border",
@@ -447,7 +665,7 @@ function buildScrollFrame()
         label:SetText(rareScanEnabled and "Disable Rare Scan" or "Enable Rare Scan")
         label:SetTextColor(rareScanEnabled and 1 or 0, rareScanEnabled and 0 or 1, 0)
         customBtn:SetBackdropColor(rareScanEnabled and 1 or 0, rareScanEnabled and 0 or 1, 0, 0.6)
-        print("Rare scanning is now", rareScanEnabled and "enabled" or "disabled")
+        print("Rare scanning " .. (rareScanEnabled and "enabled" or "disabled"))
         if not rareScanEnabled then
             guid = nil
             cachedName = nil
@@ -505,5 +723,4 @@ SlashCmdList["PHQID"] = function()
     startRareTracking()
     updateScrollView()
     scrollParent:Show()
-    print("Rare scanning initialized, state:", rareScanEnabled and "enabled" or "disabled")
 end
