@@ -29,13 +29,13 @@ local completedQuestIDs = {}
 local previousQuestIDs = {}
 
 local blacklist = {
-    [57562] = true, [53435] = true, [82146] = true,
-    [50598] = true, [57567] = true, [50603] = true,
-    [50602] = true, [85489] = true, [48639] = true,
-    [82158] = true, [86174] = true, [42233] = true,
+    [57562] = true, [53435] = true, [82146] = true, [82156] = true,
+    [50598] = true, [57567] = true, [50603] = true, [57565] = true,
+    [50602] = true, [85489] = true, [48639] = true, [56120] = true,
+    [82158] = true, [86174] = true, [42233] = true, [61982] = true,
     [48641] = true, [75511] = true, [50604] = true,
     [57566] = true, [42421] = true, [57564] = true,
-    [50562] = true, [42422] = true,
+    [50562] = true, [42422] = true, [42234] = true,
 }
 
 local function getZoneName()
@@ -142,7 +142,7 @@ local function updateScrollView()
                     end)
                 end
 
-                table.insert(widgetTable,  fontString)
+                table.insert(widgetTable, fontString)
             end
 
             local divider = scrollChild:CreateTexture(nil, "BACKGROUND")
@@ -210,7 +210,6 @@ local function updateScrollView()
         print("Invalid tab selected:", currentTab)
     end
 end
-
 local function startRareTracking()
     local previousRareFlags = scanQuestFlags()
     frame:RegisterEvent("PLAYER_TARGET_CHANGED")
@@ -269,7 +268,9 @@ local function startRareTracking()
                         local frequency = info.frequency or 0
                         local isWorldQuest = C_QuestLog.IsWorldQuest(questID)
                         if frequency == 2 or frequency == 1 or frequency == 3 or isWorldQuest then
-                            local isDaily = (frequency == 1 or frequency == 3 or (isWorldQuest and C_TaskQuest.GetQuestTimeLeftMinutes(questID) <= 1440)) and not (frequency == 2)
+                            -- Modified to handle nil timeLeft
+                            local timeLeft = isWorldQuest and C_TaskQuest.GetQuestTimeLeftMinutes(questID) or nil
+                            local isDaily = (frequency == 1 or frequency == 3 or (isWorldQuest and timeLeft and timeLeft <= 1440)) and not (frequency == 2)
                             local questType = isDaily and "Daily" or "Weekly"
                             local targetTable = isDaily and sessionDailies or sessionWeeklies
                             local dbTable = isDaily and PsychosHiddenQuestIdTrackerDB.dailies or PsychosHiddenQuestIdTrackerDB.weeklies
@@ -318,8 +319,8 @@ local function startRareTracking()
                         break
                     end
                     local title = C_QuestLog.GetTitleForQuestID(questID) or "Unknown"
-                    local timeLeft = C_TaskQuest.GetQuestTimeLeftMinutes(questID) or 0
-                    local isDaily = timeLeft <= 1440
+                    local timeLeft = C_TaskQuest.GetQuestTimeLeftMinutes(questID) or nil
+                    local isDaily = timeLeft and timeLeft <= 1440
                     local questType = isDaily and "Daily" or "Weekly"
                     local targetTable = isDaily and sessionDailies or sessionWeeklies
                     local dbTable = isDaily and PsychosHiddenQuestIdTrackerDB.dailies or PsychosHiddenQuestIdTrackerDB.weeklies
@@ -403,146 +404,135 @@ function buildScrollFrame()
     title:SetText("Psychos Hidden Quest Tracker")
     title:SetTextColor(.6, .8, 1)
 
--- knownid Frame
-knownidListFrame = CreateFrame("Frame", nil, scrollParent, "BackdropTemplate")
-knownidListFrame:SetSize(410, 365)
-knownidListFrame:SetFrameLevel(scrollParent:GetFrameLevel() + 5)
-knownidListFrame:SetPoint("TOPRIGHT", scrollParent, "TOPRIGHT", -5, -70)
-knownidListFrame:SetBackdrop({
-    bgFile = "Interface/Tooltips/UI-Tooltip-Background",
-    edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
-    tile = true, tileSize = 16, edgeSize = 12,
-    insets = { left = 4, right = 4, top = 4, bottom = 4 }
-})
-knownidListFrame:SetBackdropColor(0, 0, 0)
-knownidListFrame:Hide() -- start hidden
+    -- knownid Frame
+    knownidListFrame = CreateFrame("Frame", nil, scrollParent, "BackdropTemplate")
+    knownidListFrame:SetSize(410, 365)
+    knownidListFrame:SetFrameLevel(scrollParent:GetFrameLevel() + 5)
+    knownidListFrame:SetPoint("TOPRIGHT", scrollParent, "TOPRIGHT", -5, -70)
+    knownidListFrame:SetBackdrop({
+        bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+        edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 12,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+    })
+    knownidListFrame:SetBackdropColor(0, 0, 0)
+    knownidListFrame:Hide() -- start hidden
 
--- Create the known ID scroll frame inside knownidListFrame
-local knownidScrollFrame = CreateFrame("ScrollFrame", nil, knownidListFrame, "UIPanelScrollFrameTemplate")
-knownidScrollFrame:SetPoint("TOPLEFT", 8, -8)
-knownidScrollFrame:SetPoint("BOTTOMRIGHT", -30, 8)
-knownidScrollFrame:EnableMouseWheel(true)
-knownidScrollFrame:SetScript("OnMouseWheel", function(self, delta)
-    local current = self:GetVerticalScroll()
-    local maxScroll = self:GetVerticalScrollRange()
-    local scrollAmount = 24  -- adjust to your liking
-    self:SetVerticalScroll(math.max(0, math.min(current - delta * scrollAmount, maxScroll)))
-end)
+    -- Create the known ID scroll frame inside knownidListFrame
+    local knownidScrollFrame = CreateFrame("ScrollFrame", nil, knownidListFrame, "UIPanelScrollFrameTemplate")
+    knownidScrollFrame:SetPoint("TOPLEFT", 8, -8)
+    knownidScrollFrame:SetPoint("BOTTOMRIGHT", -30, 8)
+    knownidScrollFrame:EnableMouseWheel(true)
+    knownidScrollFrame:SetScript("OnMouseWheel", function(self, delta)
+        local current = self:GetVerticalScroll()
+        local maxScroll = self:GetVerticalScrollRange()
+        local scrollAmount = 24  -- adjust to your liking
+        self:SetVerticalScroll(math.max(0, math.min(current - delta * scrollAmount, maxScroll)))
+    end)
 
+    -- Create the content frame to hold text
+    local scrollContent = CreateFrame("Frame", nil, knownidScrollFrame)
+    scrollContent:SetSize(370, 600)
+    knownidScrollFrame:SetScrollChild(scrollContent)
 
--- Create the content frame to hold text
-local scrollContent = CreateFrame("Frame", nil, knownidScrollFrame)
-scrollContent:SetSize(370, 600)
-knownidScrollFrame:SetScrollChild(scrollContent)
+    -- Main title, centered
+    local header = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+    header:SetPoint("TOP", scrollContent, "TOP", 0, -10)
+    header:SetJustifyH("CENTER")
+    header:SetTextColor(0.6, 0.8, 1)
+    header:SetText("Known Completed Flag ID Ranges")
 
--- Main title, centered
-local header = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
-header:SetPoint("TOP", scrollContent, "TOP", 0, -10)
-header:SetJustifyH("CENTER")
-header:SetTextColor(0.6, 0.8, 1)
-header:SetText("Known Completed Flag ID Ranges")
+    -- The War Within section header, centered
+    local twwHeader = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+    twwHeader:SetPoint("TOP", scrollContent, "TOP", 0, -50)
+    twwHeader:SetJustifyH("CENTER")
+    twwHeader:SetTextColor(0.4, 0.9, 1)
+    twwHeader:SetText("-  The War Within  -")
 
--- The War Within section header, centered
-local twwHeader = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
-twwHeader:SetPoint("TOP", scrollContent, "TOP", 0, -50)
-twwHeader:SetJustifyH("CENTER")
-twwHeader:SetTextColor(0.4, 0.9, 1)
-twwHeader:SetText("-  The War Within  -")
+    -- Range entries for The War Within, columnized
+    local twwData = {
+        { "Rares",     "84000–91000" },
+        { "Weeklies",  "85000–92000" },
+        { "Dailies",   "85000–92000" },
+        { "Dungeons",  "86000–91500" },
+        { "Raids",     "88000–92000+" },
+        { "Currency",  "88000–92000" },
+    }
 
--- Range entries for The War Within, columnized
-local twwData = {
-    { "Rares",     "84000–91000" },
-    { "Weeklies",  "85000–92000" },
-    { "Dailies",   "85000–92000" },
-    { "Dungeons",  "86000–91500" },
-    { "Raids",     "88000–92000+" },
-    { "Currency",  "88000–92000" },
-}
+    local yStart = -90
+    local spacing = 22
 
-local yStart = -90
-local spacing = 22
+    for i, entry in ipairs(twwData) do
+        local label, range = unpack(entry)
+        local y = yStart - ((i - 1) * spacing)
 
-for i, entry in ipairs(twwData) do
-    local label, range = unpack(entry)
-    local y = yStart - ((i - 1) * spacing)
+        local labelText = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+        labelText:SetPoint("TOPLEFT", 50, y)
+        labelText:SetTextColor(1, 0.8, 0.2)
+        labelText:SetText(label)
 
-    local labelText = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
-    labelText:SetPoint("TOPLEFT", 50, y)
-    labelText:SetTextColor(1, 0.8, 0.2)
-    labelText:SetText(label)
+        local rangeText = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+        rangeText:SetPoint("TOPLEFT", 190, y)
+        rangeText:SetTextColor(0.9, 0, 0)
+        rangeText:SetText(range)
+    end
 
-    local rangeText = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
-    rangeText:SetPoint("TOPLEFT", 190, y)
-    rangeText:SetTextColor(0.9, 0, 0)
-    rangeText:SetText(range)
-end
+    -- Dragonflight & Prior section header, centered
+    local dfHeaderY = yStart - (#twwData * spacing) - 20
+    local dfHeader = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+    dfHeader:SetPoint("TOP", scrollContent, "TOP", 0, dfHeaderY)
+    dfHeader:SetJustifyH("CENTER")
+    dfHeader:SetTextColor(0.4, 0.9, 1)
+    dfHeader:SetText("-  Dragonflight & Prior  -")
 
--- Dragonflight & Prior section header, centered
-local dfHeaderY = yStart - (#twwData * spacing) - 20
-local dfHeader = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
-dfHeader:SetPoint("TOP", scrollContent, "TOP", 0, dfHeaderY)
-dfHeader:SetJustifyH("CENTER")
-dfHeader:SetTextColor(0.4, 0.9, 1)
-dfHeader:SetText("-  Dragonflight & Prior  -")
+    -- Dragonflight range entries, columnized
+    local dfData = {
+        { "Rares",     "80000–85000" },
+        { "Weeklies",  "50000–59999" },
+        { "Dailies",   "40000–49999" },
+        { "Dungeons",  "60000–69999" },
+        { "Raids",     "70000–79999" },
+        { "Currency",  "30000–39999" },
+    }
 
--- Dragonflight range entries, columnized
-local dfData = {
-    { "Rares",     "80000–85000" },
-    { "Weeklies",  "50000–59999" },
-    { "Dailies",   "40000–49999" },
-    { "Dungeons",  "60000–69999" },
-    { "Raids",     "70000–79999" },
-    { "Currency",  "30000–39999" },
-}
+    local dfStartY = dfHeaderY - 40
+    for i, entry in ipairs(dfData) do
+        local label, range = unpack(entry)
+        local y = dfStartY - ((i - 1) * spacing)
 
-local dfStartY = dfHeaderY - 40
-for i, entry in ipairs(dfData) do
-    local label, range = unpack(entry)
-    local y = dfStartY - ((i - 1) * spacing)
+        local labelText = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+        labelText:SetPoint("TOPLEFT", 50, y)
+        labelText:SetTextColor(1, 0.8, 0.2)
+        labelText:SetText(label)
 
-    local labelText = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
-    labelText:SetPoint("TOPLEFT", 50, y)
-    labelText:SetTextColor(1, 0.8, 0.2)
-    labelText:SetText(label)
+        local rangeText = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+        rangeText:SetPoint("TOPLEFT", 190, y)
+        rangeText:SetTextColor(0.9, 0, 0)
+        rangeText:SetText(range)
+    end
 
-    local rangeText = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
-    rangeText:SetPoint("TOPLEFT", 190, y)
-    rangeText:SetTextColor(0.9, 0, 0)
-    rangeText:SetText(range)
-end
+    -- Footer note, centered
+    local footerY = dfStartY - (#dfData * spacing) - 30
+    local footer = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    footer:SetPoint("TOP", scrollContent, "TOP", 10, footerY)
+    footer:SetWidth(350)
+    footer:SetJustifyH("CENTER")
+    footer:SetTextColor(0.9, 0, 0)
+    footer:SetText("These ranges are approximate and represent common flag IDs for each content type.")
 
--- Footer note, centered
-local footerY = dfStartY - (#dfData * spacing) - 30
-local footer = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-footer:SetPoint("TOP", scrollContent, "TOP", 10, footerY)
-footer:SetWidth(350)
-footer:SetJustifyH("CENTER")
-footer:SetTextColor(0.9, 0, 0)
-footer:SetText("These ranges are approximate and represent common flag IDs for each content type.")
-
-
-
-
-
-
-
-
-
-           local knownidbtn = CreateFrame("Button", nil, scrollParent, "UIPanelButtonTemplate")
-            knownidbtn:SetNormalFontObject("GameFontNormalLarge")
-            knownidbtn:SetHighlightFontObject("GameFontNormalLarge")
-            knownidbtn:SetSize(150, 34)
-            knownidbtn:SetPoint("TOPRIGHT", -18, -34)
-            knownidbtn:SetText("Known ID Table")
-            knownidbtn:SetScript("OnClick", function()
-             if knownidListFrame:IsShown() then
-              knownidListFrame:Hide()
-            else
-           knownidListFrame:Show()
-      end
-end)
-
-
+    local knownidbtn = CreateFrame("Button", nil, scrollParent, "UIPanelButtonTemplate")
+    knownidbtn:SetNormalFontObject("GameFontNormalLarge")
+    knownidbtn:SetHighlightFontObject("GameFontNormalLarge")
+    knownidbtn:SetSize(150, 34)
+    knownidbtn:SetPoint("TOPRIGHT", -18, -34)
+    knownidbtn:SetText("Known ID Table")
+    knownidbtn:SetScript("OnClick", function()
+        if knownidListFrame:IsShown() then
+            knownidListFrame:Hide()
+        else
+            knownidListFrame:Show()
+        end
+    end)
 
     local function createTab(label, xOffset, tabType)
         local btn = CreateFrame("Button", nil, scrollParent, "UIPanelButtonTemplate")
@@ -626,8 +616,8 @@ end)
         if min and max and min < max then
             PsychosHiddenQuestIdTrackerDB.scanRange.min = min
             PsychosHiddenQuestIdTrackerDB.scanRange.max = max
-            local tempFlags = scanQuestFlags()
-            previousRareFlags = tempFlags
+            print("Updated scan range:", min, "-", max)
+            previousRareFlags = scanQuestFlags()
         else
             print("Invalid range. Use lower value in Min and higher in Max.")
         end
