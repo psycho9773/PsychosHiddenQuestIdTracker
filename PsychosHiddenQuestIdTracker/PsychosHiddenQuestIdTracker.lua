@@ -1,27 +1,179 @@
+-- Initialize saved variables immediately on addon load
+PsychosHiddenQuestIdTrackerDB = PsychosHiddenQuestIdTrackerDB or {}
+PsychosHiddenQuestIdTrackerDB.rares = PsychosHiddenQuestIdTrackerDB.rares or {}
+PsychosHiddenQuestIdTrackerDB.weeklies = PsychosHiddenQuestIdTrackerDB.weeklies or {}
+PsychosHiddenQuestIdTrackerDB.dailies = PsychosHiddenQuestIdTrackerDB.dailies or {}
+PsychosHiddenQuestIdTrackerDB.scanRange = PsychosHiddenQuestIdTrackerDB.scanRange or { min = 84000, max = 91000 }
+PsychosHiddenQuestIdTrackerDB.rareScanEnabled = PsychosHiddenQuestIdTrackerDB.rareScanEnabled or false
+PsychosHiddenQuestIdTrackerDB.idDisplayEnabled = PsychosHiddenQuestIdTrackerDB.idDisplayEnabled or false
+PsychosHiddenQuestIdTrackerDB.minimapPos = PsychosHiddenQuestIdTrackerDB.minimapPos or { angle = math.rad(130) }
+
 local frame = CreateFrame("Frame")
 local initFrame = CreateFrame("Frame")
 local currentTab = "rares"
+local idDisplayFrame -- Frame for ID display
+local idDisplayEnabled -- Local variable for ID display state
 
-initFrame:RegisterEvent("VARIABLES_LOADED")
-initFrame:SetScript("OnEvent", function()
-    PsychosHiddenQuestIdTrackerDB = PsychosHiddenQuestIdTrackerDB or {}
-    PsychosHiddenQuestIdTrackerDB.rares    = PsychosHiddenQuestIdTrackerDB.rares    or {}
-    PsychosHiddenQuestIdTrackerDB.weeklies = PsychosHiddenQuestIdTrackerDB.weeklies or {}
-    PsychosHiddenQuestIdTrackerDB.dailies  = PsychosHiddenQuestIdTrackerDB.dailies  or {}
-    PsychosHiddenQuestIdTrackerDB.currency = PsychosHiddenQuestIdTrackerDB.currency or {}
-    PsychosHiddenQuestIdTrackerDB.scanRange = PsychosHiddenQuestIdTrackerDB.scanRange or { min = 84000, max = 91000 }
-    PsychosHiddenQuestIdTrackerDB.rareScanEnabled = PsychosHiddenQuestIdTrackerDB.rareScanEnabled or false
+-- Minimap button config
+local radius = 105
+local buttonName = "PHQIDTracker_MinimapButton"
+UpdateMinimapButtonColor = function() end -- placeholder
+
+-- ID display functions
+local defaultX, defaultY = 0, 0
+local MAX_WATCHED_TOKENS = 3
+
+local function CreateIdDisplayFrame()
+    idDisplayFrame = CreateFrame("Frame", "IdDisplayFrame", UIParent, "BackdropTemplate")
+    idDisplayFrame:SetFrameStrata("HIGH")
+    idDisplayFrame:SetHeight(30)
+    idDisplayFrame:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 8, edgeSize = 8,
+        insets = { left = 2, right = 2, top = 2, bottom = 2 }
+    })
+    idDisplayFrame:SetBackdropColor(0, 0, 0, 0.9)
+    idDisplayFrame:SetBackdropBorderColor(1, 1, 1, 1) -- Explicitly set border to white
+    idDisplayFrame.text = idDisplayFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    idDisplayFrame.text:SetPoint("CENTER")
+    idDisplayFrame:Hide()
+end
+
+local function PositionFrameBelowTooltip()
+    idDisplayFrame:ClearAllPoints()
+    idDisplayFrame:SetPoint("TOP", GameTooltip, "BOTTOM", 0, 5)
+end
+
+local function SetupIdDisplayHooks()
+    if not idDisplayFrame then
+        CreateIdDisplayFrame()
+    end
+
+    if not idDisplayEnabled then
+        idDisplayFrame:Hide()
+        return
+    end
+
+    idDisplayFrame:ClearAllPoints()
+    idDisplayFrame:SetPoint("CENTER", UIParent, "CENTER", defaultX, defaultY)
+
+    GameTooltip:HookScript("OnHide", function()
+        idDisplayFrame:Hide()
+    end)
+
+    GameTooltip:HookScript("OnUpdate", function()
+        if GameTooltip:GetUnit() or not idDisplayEnabled then
+            idDisplayFrame:Hide()
+        end
+    end)
+
+    -- Item ID
+    TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, function(_, data)
+        if idDisplayEnabled and data and data.id then
+            local itemID = data.id
+            local quality = select(3, GetItemInfo(itemID)) or 1
+            local r, g, b = GetItemQualityColor(quality)
+            local colorCode = string.format("|cff%02x%02x%02x", r * 255, g * 255, b * 255)
+            PositionFrameBelowTooltip()
+            idDisplayFrame.text:SetText(string.format("|cffffd500Item ID:|r %s%d|r", colorCode, itemID))
+            idDisplayFrame:SetWidth(idDisplayFrame.text:GetStringWidth() + 20)
+            idDisplayFrame:Show()
+        end
+    end)
+
+    -- Spell ID
+    TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Spell, function(_, data)
+        if idDisplayEnabled and data and data.id then
+            PositionFrameBelowTooltip()
+            idDisplayFrame.text:SetText(string.format("|cffffd500Spell ID:|r |cffffffff%d|r", data.id))
+            idDisplayFrame:SetWidth(idDisplayFrame.text:GetStringWidth() + 20)
+            idDisplayFrame:Show()
+        end
+    end)
+
+    -- Backpack currencies
+    for i = 1, MAX_WATCHED_TOKENS do
+        local tokenButton = _G["BackpackTokenFrameToken" .. i]
+        if tokenButton then
+            tokenButton:HookScript("OnEnter", function()
+                if idDisplayEnabled then
+                    local _, _, _, currencyID = GetBackpackCurrencyInfo(i)
+                    if currencyID then
+                        GameTooltip:AddLine("Currency ID: " .. currencyID, 1, 1, 1)
+                        GameTooltip:Show()
+                        PositionFrameBelowTooltip()
+                        idDisplayFrame.text:SetText(string.format("|cffffd500Currency ID:|r |cff00ffff%d|r", currencyID))
+                        idDisplayFrame:SetWidth(idDisplayFrame.text:GetStringWidth() + 20)
+                        idDisplayFrame:Show()
+                    end
+                end
+            end)
+        end
+    end
+
+    -- Tooltip-based currency hook
+    local function ShowCurrencyIDOnHover(currencyID)
+        if idDisplayEnabled and currencyID then
+            GameTooltip:AddLine("Currency ID: " .. currencyID, 1, 1, 1)
+            GameTooltip:Show()
+            PositionFrameBelowTooltip()
+            idDisplayFrame.text:SetText(string.format("|cffffd500Currency ID:|r |cff00ffff%d|r", currencyID))
+            idDisplayFrame:SetWidth(idDisplayFrame.text:GetStringWidth() + 20)
+            idDisplayFrame:Show()
+        end
+    end
+
+    hooksecurefunc(GameTooltip, "SetCurrencyToken", function(self, index)
+        if not idDisplayEnabled then return end
+        local link = C_CurrencyInfo.GetCurrencyListLink(index)
+        if link then
+            local currencyID = tonumber(link:match("currency:(%d+)"))
+            ShowCurrencyIDOnHover(currencyID)
+        end
+    end)
+
+    hooksecurefunc(GameTooltip, "SetCurrencyByID", function(self, currencyID)
+        if not idDisplayEnabled then return end
+        ShowCurrencyIDOnHover(currencyID)
+    end)
+end
+
+-- Initialize additional variables on ADDON_LOADED
+initFrame:RegisterEvent("ADDON_LOADED")
+initFrame:SetScript("OnEvent", function(self, event, addonName)
+    if event == "ADDON_LOADED" and addonName == "PsychosHiddenQuestIdTracker" then
+        -- Ensure saved variables are initialized
+        PsychosHiddenQuestIdTrackerDB = PsychosHiddenQuestIdTrackerDB or {}
+        PsychosHiddenQuestIdTrackerDB.rares = PsychosHiddenQuestIdTrackerDB.rares or {}
+        PsychosHiddenQuestIdTrackerDB.weeklies = PsychosHiddenQuestIdTrackerDB.weeklies or {}
+        PsychosHiddenQuestIdTrackerDB.dailies = PsychosHiddenQuestIdTrackerDB.dailies or {}
+        PsychosHiddenQuestIdTrackerDB.scanRange = PsychosHiddenQuestIdTrackerDB.scanRange or { min = 84000, max = 91000 }
+        PsychosHiddenQuestIdTrackerDB.rareScanEnabled = PsychosHiddenQuestIdTrackerDB.rareScanEnabled or false
+        PsychosHiddenQuestIdTrackerDB.idDisplayEnabled = PsychosHiddenQuestIdTrackerDB.idDisplayEnabled or false
+        PsychosHiddenQuestIdTrackerDB.minimapPos = PsychosHiddenQuestIdTrackerDB.minimapPos or { angle = math.rad(130) }
+        -- Initialize previousQuestIDs, rareScanEnabled, and idDisplayEnabled
+        previousQuestIDs = previousQuestIDs or {}
+        rareScanEnabled = PsychosHiddenQuestIdTrackerDB.rareScanEnabled
+        idDisplayEnabled = false -- Force ID display off on login
+        PsychosHiddenQuestIdTrackerDB.idDisplayEnabled = false -- Sync global variable
+        -- Populate sessionRares from saved variables
+        sessionRares = {}
+        for _, entry in pairs(PsychosHiddenQuestIdTrackerDB.rares) do
+            table.insert(sessionRares, entry)
+        end
+        -- Unregister ADDON_LOADED to avoid redundant calls
+        self:UnregisterEvent("ADDON_LOADED")
+    end
 end)
 
 local sessionRares = {}
-local sessionWeeklies, sessionDailies, sessionCurrency = {}, {}, {}
+local sessionWeeklies, sessionDailies = {}, {}
 local scrollParent, scrollFrame, scrollChild, textList
-local knownidListFrame 
+local knownidListFrame
 local rareRowWidgets = {}
 local weeklyRowWidgets = {}
 local dailiesRowWidgets = {}
-local currencyRowWidgets = {}
-local rareScanEnabled = false
 local guid, cachedName, npcID
 local lockedTarget = nil
 local lastGuid = nil
@@ -29,13 +181,13 @@ local completedQuestIDs = {}
 local previousQuestIDs = {}
 
 local blacklist = {
-    [57562] = true, [53435] = true, [82146] = true, [82156] = true,
+    [57562] = true, [53435] = true, [82146] = true, [82156] = true, [42170] = true,
     [50598] = true, [57567] = true, [50603] = true, [57565] = true,
     [50602] = true, [85489] = true, [48639] = true, [56120] = true,
     [82158] = true, [86174] = true, [42233] = true, [61982] = true,
-    [48641] = true, [75511] = true, [50604] = true,
-    [57566] = true, [42421] = true, [57564] = true,
-    [50562] = true, [42422] = true, [42234] = true,
+    [48641] = true, [75511] = true, [50604] = true, [43179] = true,
+    [57566] = true, [42421] = true, [57564] = true, [57563] = true,
+    [50562] = true, [42422] = true, [42234] = true, [57566] = true,
 }
 
 local function getZoneName()
@@ -88,13 +240,6 @@ local function updateScrollView()
         widget:SetParent(nil)
     end
     dailiesRowWidgets = {}
-
-    for _, widget in ipairs(currencyRowWidgets or {}) do
-        widget:Hide()
-        widget:ClearAllPoints()
-        widget:SetParent(nil)
-    end
-    currencyRowWidgets = {}
 
     local function sortByTimestamp(a, b)
         return a.time < b.time
@@ -161,7 +306,7 @@ local function updateScrollView()
             fields = {
                 { key = "id", x = 85, color = {0.9, 0, 0} },
                 { key = "npc", x = 190, color = {1, 0.8, 0.2} },
-                { key = "npcID", x = 460, color = {1, 0.8, 0.2} },
+                { key = "npcID", x = 500, color = {1, 0.8, 0.2} },
                 { key = "zone", x = 630, color = {0, 0.5, 0.1}, width = 200, tooltip = "zone" },
                 { key = "zoneID", x = 845, color = {0, 0.5, 0.1} },
                 { key = "time", x = 965, color = {0.5, 0.5, 0.5} },
@@ -172,8 +317,10 @@ local function updateScrollView()
             widgets = weeklyRowWidgets,
             fields = {
                 { key = "id", x = 85, color = {0.9, 0, 0} },
-                { key = "name", x = 190, color = {1, 0.8, 0.2}, width = 250, tooltip = "name" },
-                { key = "id", x = 460, color = {1, 0.8, 0.2} },
+                { key = "name", x = 190, color = {1, 0.8, 0.2}, width = 300, tooltip = "name", format = function(entry)
+                    return entry.isWorldQuest and ("WQ - " .. entry.name) or entry.name
+                end },
+                { key = "id", x = 500, color = {1, 0.8, 0.2} },
                 { key = "zone", x = 630, color = {0, 0.5, 0.1}, width = 200, tooltip = "zone" },
                 { key = "zoneID", x = 845, color = {0, 0.5, 0.1} },
                 { key = "time", x = 965, color = {0.5, 0.5, 0.5} },
@@ -184,32 +331,22 @@ local function updateScrollView()
             widgets = dailiesRowWidgets,
             fields = {
                 { key = "id", x = 85, color = {0.9, 0, 0} },
-                { key = "name", x = 190, color = {1, 0.8, 0.2}, width = 250, tooltip = "name", format = function(entry)
-                    return C_QuestLog.IsWorldQuest(entry.id) and (entry.name .. " (WQ)") or entry.name
-                end },
-                { key = "id", x = 460, color = {1, 0.8, 0.2} },
+                { key = "name", x = 190, color = {1, 0.8, 0.2}, width = 300, tooltip = "name" },
+                { key = "id", x = 500, color = {1, 0.8, 0.2} },
                 { key = "zone", x = 630, color = {0, 0.5, 0.1}, width = 200, tooltip = "zone" },
                 { key = "zoneID", x = 845, color = {0, 0.5, 0.1} },
                 { key = "time", x = 965, color = {0.5, 0.5, 0.5} },
-            },
-        },
-        currency = {
-            data = sessionCurrency,
-            widgets = currencyRowWidgets,
-            fields = {
-                { key = "name", x = 85, color = {1, 0.8, 0.2}, width = 250, tooltip = "name" },
-                { key = "amount", x = 360, color = {0, 0.5, 0.1} },
             },
         },
     }
 
     if tabConfigs[currentTab] then
         buildRows(tabConfigs[currentTab].data, tabConfigs[currentTab].widgets, tabConfigs[currentTab])
-        -- print(currentTab .. " tab data:", #tabConfigs[currentTab].data, "entries")
     else
-        print("Invalid tab selected:", currentTab)
+        --print("Invalid tab selected:", currentTab)
     end
 end
+
 local function startRareTracking()
     local previousRareFlags = scanQuestFlags()
     frame:RegisterEvent("PLAYER_TARGET_CHANGED")
@@ -260,70 +397,70 @@ local function startRareTracking()
             end
         elseif event == "QUEST_LOG_UPDATE" then
             C_Timer.After(0.5, function()
+                -- Scan quest log for quests
                 for i = 1, C_QuestLog.GetNumQuestLogEntries() do
                     local info = C_QuestLog.GetInfo(i)
                     if info and not info.isHeader then
                         local questID = info.questID
                         local title = info.title or "Unknown"
                         local frequency = info.frequency or 0
-                        local isWorldQuest = C_QuestLog.IsWorldQuest(questID)
+                        local isWorldQuest = C_QuestLog.IsWorldQuest(questID) or C_TaskQuest.IsActive(questID)
+                        local taskInfo = C_TaskQuest.GetQuestInfoByQuestID(questID)
+                        isWorldQuest = isWorldQuest or (taskInfo and taskInfo.worldQuest)
+
                         if frequency == 2 or frequency == 1 or frequency == 3 or isWorldQuest then
-                            -- Modified to handle nil timeLeft
-                            local timeLeft = isWorldQuest and C_TaskQuest.GetQuestTimeLeftMinutes(questID) or nil
-                            local isDaily = (frequency == 1 or frequency == 3 or (isWorldQuest and timeLeft and timeLeft <= 1440)) and not (frequency == 2)
+                            local isDaily = (frequency == 1 or frequency == 3) and not isWorldQuest
                             local questType = isDaily and "Daily" or "Weekly"
                             local targetTable = isDaily and sessionDailies or sessionWeeklies
                             local dbTable = isDaily and PsychosHiddenQuestIdTrackerDB.dailies or PsychosHiddenQuestIdTrackerDB.weeklies
 
-                            if not blacklist[questID] then
-                                if not previousQuestIDs[questID] then
-                                    previousQuestIDs[questID] = true
-                                    local zoneID = C_Map.GetBestMapForUnit("player") or 0
-                                    local entry = {
-                                        id = questID,
-                                        name = title,
-                                        zone = getZoneName(),
-                                        zoneID = zoneID,
-                                        time = date("%Y-%m-%d %H:%M:%S")
-                                    }
-                                    table.insert(targetTable, entry)
-                                    dbTable[questID] = entry
-                                    print(questType .. " quest picked up:", title, "| QuestID:", questID)
-                                    updateScrollView()
-                                end
-                                if C_QuestLog.IsComplete(questID) and not completedQuestIDs[questID] then
-                                    completedQuestIDs[questID] = true
-                                    local zoneID = C_Map.GetBestMapForUnit("player") or 0
-                                    local entry = {
-                                        id = questID,
-                                        name = title,
-                                        zone = getZoneName(),
-                                        zoneID = zoneID,
-                                        time = date("%Y-%m-%d %H:%M:%S")
-                                    }
-                                    table.insert(targetTable, entry)
-                                    dbTable[questID] = entry
-                                    print(questType .. " quest completed:", title, "| QuestID:", questID)
-                                    updateScrollView()
-                                end
+                            if not blacklist[questID] and not previousQuestIDs[questID] then
+                                previousQuestIDs[questID] = true
+                                local zoneID = C_Map.GetBestMapForUnit("player") or 0
+                                local entry = {
+                                    id = questID,
+                                    name = title,
+                                    zone = getZoneName(),
+                                    zoneID = zoneID,
+                                    time = date("%Y-%m-%d %H:%M:%S"),
+                                    isWorldQuest = isWorldQuest
+                                }
+                                table.insert(targetTable, entry)
+                                dbTable[questID] = entry
+                                print(questType .. (isWorldQuest and " (World)" or "") .. " quest picked up:", title, "| QuestID:", questID)
+                                updateScrollView()
+                            end
+                            if C_QuestLog.IsComplete(questID) and not completedQuestIDs[questID] then
+                                completedQuestIDs[questID] = true
+                                local zoneID = C_Map.GetBestMapForUnit("player") or 0
+                                local entry = {
+                                    id = questID,
+                                    name = title,
+                                    zone = getZoneName(),
+                                    zoneID = zoneID,
+                                    time = date("%Y-%m-%d %H:%M:%S"),
+                                    isWorldQuest = isWorldQuest
+                                }
+                                table.insert(targetTable, entry)
+                                dbTable[questID] = entry
+                                print(questType .. (isWorldQuest and " (World)" or "") .. " quest completed:", title, "| QuestID:", questID)
+                                updateScrollView()
                             end
                         end
                     end
                 end
+
+                -- Scan world quests for current zone only
                 local zoneID = C_Map.GetBestMapForUnit("player") or 0
                 local worldQuests = C_TaskQuest.GetQuestsForPlayerByMapID(zoneID)
                 for _, questInfo in ipairs(worldQuests or {}) do
                     local questID = questInfo.questId
                     if not questID then
-                        -- Skip silently
                         break
                     end
                     local title = C_QuestLog.GetTitleForQuestID(questID) or "Unknown"
-                    local timeLeft = C_TaskQuest.GetQuestTimeLeftMinutes(questID) or nil
-                    local isDaily = timeLeft and timeLeft <= 1440
-                    local questType = isDaily and "Daily" or "Weekly"
-                    local targetTable = isDaily and sessionDailies or sessionWeeklies
-                    local dbTable = isDaily and PsychosHiddenQuestIdTrackerDB.dailies or PsychosHiddenQuestIdTrackerDB.weeklies
+                    local targetTable = sessionWeeklies
+                    local dbTable = PsychosHiddenQuestIdTrackerDB.weeklies
                     if not blacklist[questID] and not previousQuestIDs[questID] then
                         previousQuestIDs[questID] = true
                         local entry = {
@@ -331,11 +468,12 @@ local function startRareTracking()
                             name = title,
                             zone = getZoneName(),
                             zoneID = zoneID,
-                            time = date("%Y-%m-%d %H:%M:%S")
+                            time = date("%Y-%m-%d %H:%M:%S"),
+                            isWorldQuest = true
                         }
                         table.insert(targetTable, entry)
                         dbTable[questID] = entry
-                        print(questType .. " (World) quest picked up:", title, "| QuestID:", questID)
+                        print("Weekly (World) quest picked up:", title, "| QuestID:", questID)
                         updateScrollView()
                     end
                 end
@@ -379,6 +517,13 @@ local function startRareTracking()
     end)
 end
 
+local idDisplayEventFrame = CreateFrame("Frame")
+idDisplayEventFrame:RegisterEvent("PLAYER_LOGIN")
+idDisplayEventFrame:SetScript("OnEvent", function()
+    CreateIdDisplayFrame()
+    SetupIdDisplayHooks()
+end)
+
 function buildScrollFrame()
     scrollParent = CreateFrame("Frame", "PHQIDTrackerFrame", UIParent, "BackdropTemplate")
     tinsert(UISpecialFrames, "PHQIDTrackerFrame")
@@ -401,7 +546,7 @@ function buildScrollFrame()
 
     local title = scrollParent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
     title:SetPoint("TOPLEFT", 20, -12)
-    title:SetText("Psychos Hidden Quest Tracker")
+    title:SetText("Psychos Hidden Quest ID Tracker")
     title:SetTextColor(.6, .8, 1)
 
     -- knownid Frame
@@ -416,9 +561,8 @@ function buildScrollFrame()
         insets = { left = 4, right = 4, top = 4, bottom = 4 }
     })
     knownidListFrame:SetBackdropColor(0, 0, 0)
-    knownidListFrame:Hide() -- start hidden
+    knownidListFrame:Hide()
 
-    -- Create the known ID scroll frame inside knownidListFrame
     local knownidScrollFrame = CreateFrame("ScrollFrame", nil, knownidListFrame, "UIPanelScrollFrameTemplate")
     knownidScrollFrame:SetPoint("TOPLEFT", 8, -8)
     knownidScrollFrame:SetPoint("BOTTOMRIGHT", -30, 8)
@@ -426,32 +570,28 @@ function buildScrollFrame()
     knownidScrollFrame:SetScript("OnMouseWheel", function(self, delta)
         local current = self:GetVerticalScroll()
         local maxScroll = self:GetVerticalScrollRange()
-        local scrollAmount = 24  -- adjust to your liking
+        local scrollAmount = 24
         self:SetVerticalScroll(math.max(0, math.min(current - delta * scrollAmount, maxScroll)))
     end)
 
-    -- Create the content frame to hold text
-    local scrollContent = CreateFrame("Frame", nil, knownidScrollFrame)
+    local scrollContent = CreateFrame("Frame", nil, knownidListFrame)
     scrollContent:SetSize(370, 600)
     knownidScrollFrame:SetScrollChild(scrollContent)
 
-    -- Main title, centered
     local header = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
     header:SetPoint("TOP", scrollContent, "TOP", 0, -10)
     header:SetJustifyH("CENTER")
     header:SetTextColor(0.6, 0.8, 1)
     header:SetText("Known Completed Flag ID Ranges")
 
-    -- The War Within section header, centered
     local twwHeader = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
     twwHeader:SetPoint("TOP", scrollContent, "TOP", 0, -50)
     twwHeader:SetJustifyH("CENTER")
     twwHeader:SetTextColor(0.4, 0.9, 1)
     twwHeader:SetText("-  The War Within  -")
 
-    -- Range entries for The War Within, columnized
     local twwData = {
-        { "Rares",     "84000–91000" },
+        { "Rares",     "84000–92000" },
         { "Weeklies",  "85000–92000" },
         { "Dailies",   "85000–92000" },
         { "Dungeons",  "86000–91500" },
@@ -466,18 +606,17 @@ function buildScrollFrame()
         local label, range = unpack(entry)
         local y = yStart - ((i - 1) * spacing)
 
-        local labelText = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+        local labelText = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
         labelText:SetPoint("TOPLEFT", 50, y)
         labelText:SetTextColor(1, 0.8, 0.2)
         labelText:SetText(label)
 
-        local rangeText = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+        local rangeText = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
         rangeText:SetPoint("TOPLEFT", 190, y)
         rangeText:SetTextColor(0.9, 0, 0)
         rangeText:SetText(range)
     end
 
-    -- Dragonflight & Prior section header, centered
     local dfHeaderY = yStart - (#twwData * spacing) - 20
     local dfHeader = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
     dfHeader:SetPoint("TOP", scrollContent, "TOP", 0, dfHeaderY)
@@ -485,7 +624,6 @@ function buildScrollFrame()
     dfHeader:SetTextColor(0.4, 0.9, 1)
     dfHeader:SetText("-  Dragonflight & Prior  -")
 
-    -- Dragonflight range entries, columnized
     local dfData = {
         { "Rares",     "80000–85000" },
         { "Weeklies",  "50000–59999" },
@@ -500,18 +638,17 @@ function buildScrollFrame()
         local label, range = unpack(entry)
         local y = dfStartY - ((i - 1) * spacing)
 
-        local labelText = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+        local labelText = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
         labelText:SetPoint("TOPLEFT", 50, y)
         labelText:SetTextColor(1, 0.8, 0.2)
         labelText:SetText(label)
 
-        local rangeText = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+        local rangeText = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
         rangeText:SetPoint("TOPLEFT", 190, y)
         rangeText:SetTextColor(0.9, 0, 0)
         rangeText:SetText(range)
     end
 
-    -- Footer note, centered
     local footerY = dfStartY - (#dfData * spacing) - 30
     local footer = scrollContent:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     footer:SetPoint("TOP", scrollContent, "TOP", 10, footerY)
@@ -534,6 +671,48 @@ function buildScrollFrame()
         end
     end)
 
+ local idDisplayBtn = CreateFrame("Frame", nil, scrollParent, "BackdropTemplate")
+idDisplayBtn:SetSize(400, 30)
+idDisplayBtn:SetPoint("TOPLEFT", 15, -40)
+idDisplayBtn:SetBackdrop({
+    bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+    edgeFile = "Interface/DialogFrame/UI-DialogBox-Border",
+    tile = true, tileSize = 16, edgeSize = 16,
+    insets = { left = 4, right = 4, top = 4, bottom = 4 }
+})
+idDisplayBtn:SetBackdropColor(PsychosHiddenQuestIdTrackerDB.idDisplayEnabled and 1 or 0, PsychosHiddenQuestIdTrackerDB.idDisplayEnabled and 0 or 1, 0, 0.6)
+
+local idDisplayLabel = idDisplayBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+idDisplayLabel:SetPoint("CENTER")
+idDisplayLabel:SetText(PsychosHiddenQuestIdTrackerDB.idDisplayEnabled and "Disable On Hover Tool for Currencies/Items/Spells" or "Enable On Hover Tool for Currencies/Items/Spells")
+idDisplayLabel:SetTextColor(PsychosHiddenQuestIdTrackerDB.idDisplayEnabled and 1 or 0, PsychosHiddenQuestIdTrackerDB.idDisplayEnabled and 0 or 1, 0)
+
+-- Add hover glow effect
+local highlight = idDisplayBtn:CreateTexture(nil, "HIGHLIGHT")
+highlight:SetAllPoints()
+highlight:SetTexture("Interface\\Buttons\\UI-Common-MouseHilight")
+highlight:SetBlendMode("ADD")
+highlight:Hide()
+
+idDisplayBtn:EnableMouse(true)
+idDisplayBtn:SetScript("OnEnter", function()
+    highlight:Show()
+end)
+idDisplayBtn:SetScript("OnLeave", function()
+    highlight:Hide()
+end)
+
+idDisplayBtn:SetScript("OnMouseDown", function()
+    idDisplayEnabled = not idDisplayEnabled
+    PsychosHiddenQuestIdTrackerDB.idDisplayEnabled = idDisplayEnabled
+    idDisplayLabel:SetText(idDisplayEnabled and "Disable On Hover Tool for Currencies/Items/Spells" or "Enable On Hover Tool for Currencies/Items/Spells")
+    idDisplayLabel:SetTextColor(idDisplayEnabled and 1 or 0, idDisplayEnabled and 0 or 1, 0)
+    idDisplayBtn:SetBackdropColor(idDisplayEnabled and 1 or 0, idDisplayEnabled and 0 or 1, 0, 0.6)
+    print("On Hover Tool " .. (idDisplayEnabled and "enabled" or "disabled"))
+    SetupIdDisplayHooks()
+end)
+
+
     local function createTab(label, xOffset, tabType)
         local btn = CreateFrame("Button", nil, scrollParent, "UIPanelButtonTemplate")
         btn:SetNormalFontObject("GameFontNormalLarge")
@@ -543,7 +722,12 @@ function buildScrollFrame()
         btn:SetText(label)
         btn:SetScript("OnClick", function()
             currentTab = tabType
-            if tabType == "weeklies" then
+            if tabType == "rares" then
+                sessionRares = {}
+                for _, entry in pairs(PsychosHiddenQuestIdTrackerDB.rares) do
+                    table.insert(sessionRares, entry)
+                end
+            elseif tabType == "weeklies" then
                 sessionWeeklies = {}
                 for _, entry in pairs(PsychosHiddenQuestIdTrackerDB.weeklies) do
                     table.insert(sessionWeeklies, entry)
@@ -559,15 +743,14 @@ function buildScrollFrame()
         end)
     end
 
-    createTab("Rares", 120, "rares")
-    createTab("Weeklies", 265, "weeklies")
-    createTab("Dailies", 410, "dailies")
-    createTab("Currency", 555, "currency")
+    createTab("Rares", 420, "rares")
+    createTab("Weeklies", 540, "weeklies")
+    createTab("Dailies", 660, "dailies")
 
     local masterHeaders = {
         { text = "Completed Flag ID#", x = 10 },
-        { text = "Name/Quest/Currency", x = 190 },
-        { text = "Npc/Qst/Curr.ID#", x = 460 },
+        { text = "Name/Quest", x = 195 },
+        { text = "Npc/Quest ID#", x = 470 },
         { text = "Zone Name", x = 630 },
         { text = "Zone ID", x = 845 },
         { text = "Timestamp", x = 965 },
@@ -632,38 +815,57 @@ function buildScrollFrame()
         self:ClearFocus()
     end)
 
-    local customBtn = CreateFrame("Frame", nil, scrollParent, "BackdropTemplate")
-    customBtn:SetSize(240, 60)
-    customBtn:SetPoint("TOPRIGHT", -180, -10)
-    customBtn:SetBackdrop({
-        bgFile = "Interface/Tooltips/UI-Tooltip-Background",
-        edgeFile = "Interface/DialogFrame/UI-DialogBox-Border",
-        tile = true, tileSize = 16, edgeSize = 16,
-        insets = { left = 4, right = 4, top = 4, bottom = 4 }
-    })
-    customBtn:SetBackdropColor(PsychosHiddenQuestIdTrackerDB.rareScanEnabled and 1 or 0, PsychosHiddenQuestIdTrackerDB.rareScanEnabled and 0 or 1, 0, 0.6)
+local customBtn = CreateFrame("Frame", nil, scrollParent, "BackdropTemplate")
+customBtn:SetSize(240, 60)
+customBtn:SetPoint("TOPRIGHT", -180, -10)
+customBtn:SetBackdrop({
+    bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+    edgeFile = "Interface/DialogFrame/UI-DialogBox-Border",
+    tile = true, tileSize = 16, edgeSize = 16,
+    insets = { left = 4, right = 4, top = 4, bottom = 4 }
+})
+customBtn:SetBackdropColor(PsychosHiddenQuestIdTrackerDB.rareScanEnabled and 1 or 0, PsychosHiddenQuestIdTrackerDB.rareScanEnabled and 0 or 1, 0, 0.6)
 
-    local label = customBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
-    label:SetPoint("CENTER")
-    label:SetText(PsychosHiddenQuestIdTrackerDB.rareScanEnabled and "Disable Rare Scan" or "Enable Rare Scan")
-    label:SetTextColor(PsychosHiddenQuestIdTrackerDB.rareScanEnabled and 1 or 0, PsychosHiddenQuestIdTrackerDB.rareScanEnabled and 0 or 1, 0)
+local label = customBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+label:SetPoint("CENTER")
+label:SetText(PsychosHiddenQuestIdTrackerDB.rareScanEnabled and "Disable Rare Scan" or "Enable Rare Scan")
+label:SetTextColor(PsychosHiddenQuestIdTrackerDB.rareScanEnabled and 1 or 0, PsychosHiddenQuestIdTrackerDB.rareScanEnabled and 0 or 1, 0)
 
-    customBtn:EnableMouse(true)
-    customBtn:SetScript("OnMouseDown", function()
-        rareScanEnabled = not rareScanEnabled
-        PsychosHiddenQuestIdTrackerDB.rareScanEnabled = rareScanEnabled
-        label:SetText(rareScanEnabled and "Disable Rare Scan" or "Enable Rare Scan")
-        label:SetTextColor(rareScanEnabled and 1 or 0, rareScanEnabled and 0 or 1, 0)
-        customBtn:SetBackdropColor(rareScanEnabled and 1 or 0, rareScanEnabled and 0 or 1, 0, 0.6)
-        print("Rare scanning " .. (rareScanEnabled and "enabled" or "disabled"))
-        if not rareScanEnabled then
-            guid = nil
-            cachedName = nil
-            npcID = nil
-            lockedTarget = nil
-            lastGuid = nil
-        end
-    end)
+-- Add hover glow effect
+local highlight = customBtn:CreateTexture(nil, "HIGHLIGHT")
+highlight:SetAllPoints()
+highlight:SetTexture("Interface\\Buttons\\UI-Common-MouseHilight")
+highlight:SetBlendMode("ADD")
+highlight:SetAlpha(0.6) -- Optional: soften the glow
+highlight:Hide()
+
+customBtn:EnableMouse(true)
+customBtn:SetScript("OnEnter", function()
+    highlight:Show()
+end)
+customBtn:SetScript("OnLeave", function()
+    highlight:Hide()
+end)
+
+customBtn:SetScript("OnMouseDown", function()
+    rareScanEnabled = not rareScanEnabled
+    PsychosHiddenQuestIdTrackerDB.rareScanEnabled = rareScanEnabled
+    label:SetText(rareScanEnabled and "Disable Rare Scan" or "Enable Rare Scan")
+    label:SetTextColor(rareScanEnabled and 1 or 0, rareScanEnabled and 0 or 1, 0)
+    customBtn:SetBackdropColor(rareScanEnabled and 1 or 0, rareScanEnabled and 0 or 1, 0, 0.6)
+    print("Rare scanning " .. (rareScanEnabled and "enabled" or "disabled"))
+
+    if not rareScanEnabled then
+        guid = nil
+        cachedName = nil
+        npcID = nil
+        lockedTarget = nil
+        lastGuid = nil
+    end
+
+    UpdateMinimapButtonColor()
+end)
+
 
     local closeBtn = CreateFrame("Button", nil, scrollParent, "UIPanelCloseButton")
     closeBtn:SetPoint("TOPRIGHT", -5, -5)
@@ -693,24 +895,112 @@ function buildScrollFrame()
     textList:SetText("")
 end
 
+-- Create minimap button
+local minimapButton = CreateFrame("Button", buttonName, Minimap)
+minimapButton:SetSize(28, 28)
+minimapButton:SetFrameLevel(Minimap:GetFrameLevel() + 5)
+minimapButton:EnableMouse(true)
+minimapButton:RegisterForDrag("RightButton")
+minimapButton:SetClampedToScreen(true)
+
+-- Icon texture
+local texture = minimapButton:CreateTexture(nil, "BACKGROUND")
+texture:SetTexture("136122")
+texture:SetAllPoints()
+minimapButton.texture = texture
+
+-- Circular mask
+local mask = minimapButton:CreateMaskTexture()
+mask:SetTexture("Interface\\CHARACTERFRAME\\TempPortraitAlphaMask")
+mask:SetAllPoints()
+texture:AddMaskTexture(mask)
+
+-- Optional border
+local border = minimapButton:CreateTexture(nil, "OVERLAY")
+border:SetTexture("Interface\\Common\\GoldRing")
+border:SetSize(30, 30)
+border:SetPoint("CENTER", minimapButton, "CENTER")
+function UpdateMinimapButtonColor()
+    if not border then return end
+    if PsychosHiddenQuestIdTrackerDB.rareScanEnabled then
+        border:SetVertexColor(1, 0, 0)
+    else
+        border:SetVertexColor(0, 1, 0)
+    end
+end
+
+-- Position updater
+local function UpdateButtonPosition()
+    local a = PsychosHiddenQuestIdTrackerDB.minimapPos.angle or math.rad(130)
+    local x = math.cos(a) * radius
+    local y = math.sin(a) * radius
+    minimapButton:SetPoint("CENTER", Minimap, "CENTER", x, y)
+end
+
+-- Drag behavior
+minimapButton:SetScript("OnDragStart", function(self)
+    self.dragging = true
+end)
+
+minimapButton:SetScript("OnDragStop", function(self)
+    self.dragging = false
+    self:StopMovingOrSizing()
+end)
+
+minimapButton:SetScript("OnUpdate", function(self)
+    if self.dragging then
+        local mx, my = Minimap:GetCenter()
+        local px, py = GetCursorPosition()
+        local scale = Minimap:GetEffectiveScale()
+        local dx = (px / scale - mx)
+        local dy = (py / scale - my)
+        local newAngle = math.atan2(dy, dx)
+        PsychosHiddenQuestIdTrackerDB.minimapPos.angle = newAngle
+        UpdateButtonPosition()
+    end
+end)
+
+-- Tooltip on hover
+minimapButton:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+    GameTooltip:SetText("|cff00FF00Psychos Hidden Quest ID Tracker|r")
+    GameTooltip:AddLine("|cff00A800Left click|r to open/close|r")
+    GameTooltip:AddLine("|cffFF7733Right click|r to drag")
+    GameTooltip:Show()
+end)
+
+minimapButton:SetScript("OnLeave", function()
+    GameTooltip:Hide()
+end)
+
+-- Click behavior to toggle main frame
+minimapButton:SetScript("OnClick", function(self, button)
+    if button == "LeftButton" then
+        if scrollParent and scrollParent:IsShown() then
+            scrollParent:Hide()
+        else
+            SlashCmdList["PHQID"]()
+        end
+    end
+end)
+
+-- Initialize minimap button position on login
+local minimapEventFrame = CreateFrame("Frame")
+minimapEventFrame:RegisterEvent("PLAYER_LOGIN")
+minimapEventFrame:SetScript("OnEvent", function()
+    UpdateButtonPosition()
+    UpdateMinimapButtonColor()
+    --print("PsychosHiddenQuestIdTracker: Minimap button initialized")
+end)
+
 SLASH_PHQID1 = "/phqid"
 SlashCmdList["PHQID"] = function()
-    if not PsychosHiddenQuestIdTrackerDB then
-        PsychosHiddenQuestIdTrackerDB = {}
-    end
-    PsychosHiddenQuestIdTrackerDB.rares    = PsychosHiddenQuestIdTrackerDB.rares    or {}
-    PsychosHiddenQuestIdTrackerDB.weeklies = PsychosHiddenQuestIdTrackerDB.weeklies or {}
-    PsychosHiddenQuestIdTrackerDB.dailies  = PsychosHiddenQuestIdTrackerDB.dailies  or {}
-    PsychosHiddenQuestIdTrackerDB.currency = PsychosHiddenQuestIdTrackerDB.currency or {}
-    PsychosHiddenQuestIdTrackerDB.scanRange = PsychosHiddenQuestIdTrackerDB.scanRange or { min = 84000, max = 91000 }
-    PsychosHiddenQuestIdTrackerDB.rareScanEnabled = PsychosHiddenQuestIdTrackerDB.rareScanEnabled or false
-    rareScanEnabled = PsychosHiddenQuestIdTrackerDB.rareScanEnabled
-
     if not scrollParent then
         buildScrollFrame()
     end
 
     startRareTracking()
     updateScrollView()
+    SetupIdDisplayHooks()
     scrollParent:Show()
 end
