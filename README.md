@@ -5,9 +5,9 @@ A World of Warcraft Retail addon for Data Mining while you play!
 
 ## 🔧 Features
 
-- This addon can pull rare flag completed quest numbers from rare kills while playing.
-- Logs the data for rare's / weekly quests / daily  quests and displays them with a button click.
-- Saves all collected information to saved variables to inspect later.
+- This addon can pull rare flag completed quest ID numbers from rare kills while playing.
+- Logs the ID data for rare's / weekly quests / daily  quests and displays them with a button click.
+- Saves information collected to saved variables to inspect later.
 - Use the On Hover Tool to collect ID information for currencies, items and spells.
 - The hover tool does not save any information to saved variables, manual notes needed for that information.
   
