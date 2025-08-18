@@ -9,6 +9,7 @@ A World of Warcraft Retail addon for Data Mining while you play!
 - Logs the data for rare's / weekly quests / daily  quests and displays them with a button click.
 - Saves all collected information to saved variables to inspect later.
 - Use the On Hover Tool to collect ID information for currencies, items and spells.
+- The hover tool does not save any information to saved variables, manual notes needed for that information.
   
 ![Click to scan, Click to open hover tool](https://imgur.com/28aD0q4.png))
 
