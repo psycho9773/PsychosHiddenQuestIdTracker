@@ -1,4 +1,4 @@
-## Interface: 100107
+## Interface: 110200
 ## Title: PsychosHiddenQuestIdTracker
 ## Notes: Tracks hidden quest completions
 ## Author: Psycho
@@ -7,4 +7,5 @@
 ## SavedVariables: PsychosHiddenQuestIdTrackerDB
 
 PsychosHiddenQuestIdTracker.lua
+
 
