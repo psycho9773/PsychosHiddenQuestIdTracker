@@ -1,11 +1,12 @@
 ## Interface: 110200
 ## Title: PsychosHiddenQuestIdTracker
-## Notes: Tracks hidden quest completions
+## Notes: Tracks quest ID's and completion quest ID's for rare's
 ## Author: Psycho
 ## Version: 1.0
 ## IconTexture: 136122
 ## SavedVariables: PsychosHiddenQuestIdTrackerDB
 
 PsychosHiddenQuestIdTracker.lua
+
 
 
